@@ -30,9 +30,9 @@ jobs:
         working-directory: ./history
         run: |
           echo "=== 已下载的分卷文件 ==="
-          ls -la *.7z.* 2>/dev/null | sort -V || echo "未找到分卷文件"
+          ls -la *.7z.* 2>/dev/null | sort -V
           VOLUME_COUNT=$(ls *.7z.* 2>/dev/null | wc -l)
-          echo "✅ 找到 $VOLUME_COUNT 个分卷文件"
+          echo "找到 $VOLUME_COUNT 个分卷文件"
 
       # 4. 安装解压工具
       - name: Install p7zip
@@ -43,10 +43,6 @@ jobs:
         working-directory: ./history
         run: |
           FIRST_VOLUME=$(ls *.7z.001 2>/dev/null | head -n 1)
-          if [ -z "$FIRST_VOLUME" ]; then
-            echo "❌ 错误：找不到.7z.001文件"
-            exit 1
-          fi
           7z x "$FIRST_VOLUME" -y
 
       # 6. 查找并准备APK文件
@@ -54,12 +50,8 @@ jobs:
         working-directory: ./history
         run: |
           APK=$(find . -type f \( -name "*.apk" -o -name "*.xapk" \) | head -n 1)
-          if [ -z "$APK" ]; then
-            echo "❌ 未找到APK文件"
-            exit 1
-          fi
           cp "$APK" Phigros.apk
-          echo "✅ APK文件已准备"
+          echo "APK文件已准备"
 
       # 7. 检出资源处理脚本仓库
       - name: Checkout Phigros_Resource1
@@ -77,43 +69,21 @@ jobs:
         with:
           python-version: "3.10"
 
-      # 10. 安装Python依赖（如果有）
-      - name: Install Python dependencies
-        working-directory: ./resource
-        run: |
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          fi
-
-      # 11. 清理旧的输出文件
+      # 10. 清理旧的输出文件
       - name: Clean old outputs
         working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 12. 运行资源提取脚本
-      - name: Run resources.py
+      # 11. 运行资源提取脚本 (关键修改：使用resource.py)
+      - name: Run resource.py
         working-directory: resource
         run: |
-          echo "正在运行资源提取脚本..."
-          python resources.py
-          echo "✅ 资源提取完成"
+          echo "正在运行 resource.py 脚本..."
+          python resource.py
+          echo "资源提取完成"
 
-      # 13. 调试：检查生成的资源
-      - name: Check Generated Resources
-        working-directory: ./resource
-        run: |
-          echo "=== 生成的资源文件 ==="
-          du -sh avatar/ chart/ illustration/ music/ 2>/dev/null || echo "部分目录不存在"
-          echo "=== 各目录文件数 ==="
-          for dir in avatar chart illustration illustrationBlur illustrationLowRes music; do
-            if [ -d "$dir" ]; then
-              count=$(find "$dir" -type f | wc -l)
-              echo "$dir: $count 个文件"
-            fi
-          done
-
-      # 14. 检出构建产物仓库
+      # 12. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -122,7 +92,7 @@ jobs:
           ref: master
           path: build
 
-      # 15. 发布资源到构建仓库
+      # 13. 发布资源到构建仓库
       - name: Publish resources
         working-directory: ./resource
         run: |
@@ -135,7 +105,7 @@ jobs:
             music \
             ../build/
 
-      # 16. 提交并推送更改
+      # 14. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
@@ -143,7 +113,7 @@ jobs:
           git config user.email "github-actions@users.noreply.github.com"
           git add .
           if git diff --cached --quiet; then
-            echo "没有更改，跳过提交"
+            echo "没有更改"
           else
             git commit -m "自动更新资源 $(date +'%Y-%m-%d %H:%M')"
             git push origin master
