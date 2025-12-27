@@ -28,7 +28,8 @@ jobs:
       # 3. 安装解压工具
       - name: Install p7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
-        # 3.1 [新增] 安装音频编解码器库
+
+      # 4. 安装音频编解码器库 (解决fsb5依赖问题)
       - name: Install audio codec libraries
         run: |
           echo "安装音频编解码器库..."
@@ -42,8 +43,7 @@ jobs:
             libavcodec-dev
           echo "音频库安装完成"
 
-
-      # 4. 解压分卷包并提取APK
+      # 5. 解压分卷包并提取APK
       - name: Extract & Prepare APK
         working-directory: ./history
         run: |
@@ -62,49 +62,64 @@ jobs:
           echo "Found APK: $APK"
           cp "$APK" Phigros.apk
 
-      # 5. 检出资源处理脚本仓库
+      # 6. 检出资源处理脚本仓库
       - name: Checkout Phigros_Resource1
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # 6. 更新APK文件
+      # 7. 更新APK文件
       - name: Update APK
         run: cp history/Phigros.apk resource/Phigros.apk
 
-      # 7. 设置Python环境
+      # 8. 设置Python环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 8. 安装Python依赖 (包括UnityPy)
+      # 9. 安装Python依赖
       - name: Install Python dependencies
         working-directory: ./resource
         run: |
           echo "正在安装Python依赖包..."
-          pip install UnityPy
+          pip install UnityPy fsb5
           if [ -f "requirements.txt" ]; then
             pip install -r requirements.txt
           fi
           echo "依赖安装完成。"
 
-      # 9. 清理旧的输出文件
+      # 10. 清理旧的输出文件
       - name: Clean old outputs
         working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 10. 运行资源提取脚本 (修复：传递APK文件路径参数)
+      # 11. 运行资源提取脚本
       - name: Run resource.py
         working-directory: resource
         run: |
           echo "正在运行 resource.py 脚本..."
-          # 关键修复：传递 Phigros.apk 作为命令行参数
           python resource.py Phigros.apk
           echo "✅ 资源提取完成"
 
-      # 11. 检出构建产物仓库
+      # 12. 调试：检查生成的资源
+      - name: Debug - Check generated resources
+        working-directory: ./resource
+        run: |
+          echo "=== 生成的资源文件夹大小 ==="
+          du -sh avatar/ chart/ illustration/ music/ 2>/dev/null || echo "某个目录不存在"
+          echo "=== 各目录文件数量 ==="
+          for dir in avatar chart illustration illustrationBlur illustrationLowRes music; do
+            if [ -d "$dir" ]; then
+              count=$(find "$dir" -type f | wc -l)
+              echo "$dir: $count 个文件"
+            else
+              echo "$dir: 目录不存在"
+            fi
+          done
+
+      # 13. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -113,10 +128,21 @@ jobs:
           ref: master
           path: build
 
-      # 12. 发布资源到构建仓库
+      # 14. 调试：检查检出是否成功
+      - name: Debug - Check build repo
+        working-directory: ./build
+        run: |
+          echo "=== build目录状态 ==="
+          pwd
+          ls -la
+          echo "=== Git远程仓库 ==="
+          git remote -v
+
+      # 15. 发布资源到构建仓库
       - name: Publish resources
         working-directory: ./resource
         run: |
+          echo "正在同步资源到build目录..."
           rsync -av --delete \
             avatar \
             chart \
@@ -125,17 +151,34 @@ jobs:
             illustrationLowRes \
             music \
             ../build/
+          echo "✅ 资源同步完成"
 
-      # 13. 提交并推送更改
+      # 16. 调试：检查同步结果
+      - name: Debug - Check sync result
+        working-directory: ./build
+        run: |
+          echo "=== 同步后build目录 ==="
+          du -sh * 2>/dev/null || echo "目录为空"
+          echo "=== 文件数量统计 ==="
+          for dir in avatar chart illustration illustrationBlur illustrationLowRes music; do
+            if [ -d "$dir" ]; then
+              count=$(find "$dir" -type f | wc -l)
+              echo "$dir: $count 个文件"
+            fi
+          done
+
+      # 17. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
+          echo "准备提交更改..."
           git config user.name "github-actions[bot]"
           git config user.email "github-actions@users.noreply.github.com"
           git add .
           if git diff --cached --quiet; then
-            echo "No changes"
+            echo "没有检测到更改，跳过提交。"
           else
-            git commit -m "auto update"
+            git commit -m "自动更新资源 - $(date +'%Y-%m-%d %H:%M:%S')"
             git push origin master
+            echo "✅ 更改已提交并推送"
           fi
