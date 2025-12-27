@@ -2,22 +2,36 @@ name: Sync Fork
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 每天凌晨自动运行
-  workflow_dispatch: # 允许手动触发
+    - cron: '0 0 * * *' # 每天北京时间上午 8:00 自动运行
+  workflow_dispatch:   # 允许手动触发同步
 
 jobs:
   sync:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 必须开启写权限
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
-          ref: master # 你的分支名
+          ref: master  # 你的分支名
+          fetch-depth: 0
 
       - name: Sync upstream
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
         with:
-          upstream_repository: 7aGiven/Phigros_Resource原作者用户名/仓库名
-          upstream_branch: main
-          target_branch: main
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # 1. 原作者仓库信息
+          upstream_sync_repo: 7aGiven/Phigros_Resource
+          upstream_sync_branch: main
+          
+          # 2. 你的仓库分支信息
+          target_sync_branch: master
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+
+          # 3. 关键参数：允许合并名称不同、历史不相关的分支
+          upstream_pull_args: '--allow-unrelated-histories'
+          
+          # 4. Git 用户设置
+          git_config_user: 'GitHub Action'
+          git_config_email: 'action@github.com'
