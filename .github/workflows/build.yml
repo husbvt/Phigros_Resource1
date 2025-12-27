@@ -1,4 +1,4 @@
-name: Build Phigros Resources (完整版)
+name: Build Phigros Resources (修改配置分批)
 
 on:
   workflow_dispatch:
@@ -11,11 +11,10 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # 1. 创建历史目录
+      # 步骤 1-9：准备阶段 (与之前完全相同)
       - name: Create History Directory
         run: mkdir -p history
 
-      # 2. 从Release下载全部分卷文件
       - name: Download ALL Release Assets
         uses: robinraju/release-downloader@v1.10
         with:
@@ -26,11 +25,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 安装解压工具
       - name: Install p7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
-      # 4. 解压分卷包并提取APK
       - name: Extract & Prepare APK
         working-directory: ./history
         run: |
@@ -40,13 +37,12 @@ jobs:
           cp "$APK" Phigros.apk
           rm -f *.7z.*
 
-      # 5. 检出资源处理脚本仓库
       - name: Checkout Phigros_Resource1
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # 5.1 【新增】下载包含 info 目录的仓库分支
+      # ======【新增】开始：获取 info 目录 ======
       - name: Checkout Info Directory
         uses: actions/checkout@v4
         with:
@@ -54,56 +50,49 @@ jobs:
           ref: info
           path: info_temp
 
-      # 5.2 【新增】移动 Info 目录到 resource 下
       - name: Move Info Directory
+        working-directory: ./resource
         run: |
-          echo "正在移动 info 目录..."
-          # 检查下载的内容结构
-          echo "info_temp 目录结构:"
-          ls -la info_temp/
-          # 假设info文件夹在根目录，将其移动到resource下
-          mv info_temp/info resource/ 2>/dev/null || echo "尝试其他目录结构..."
-          # 如果info文件夹不在根目录，尝试移动整个目录
-          if [ ! -d "resource/info" ]; then
-            echo "未找到info/子目录，尝试将整个内容作为info目录"
-            mv info_temp resource/info
+          echo "正在合并 info 目录..."
+          # 检查并合并下载的 info 内容到 resource/info
+          if [ -d "../info_temp/info" ]; then
+            echo "找到 info 子目录，正在合并..."
+            cp -r ../info_temp/info/* info/ 2>/dev/null || true
+          else
+            echo "info_temp 根目录即为所需文件，正在合并..."
+            cp -r ../info_temp/* info/ 2>/dev/null || true
           fi
-          rm -rf info_temp
-          echo "移动完成，检查 resource/info:"
-          ls -la resource/info/ 2>/dev/null || echo "警告：resource/info 可能不存在"
+          # 清理临时目录
+          rm -rf ../info_temp
+          echo "合并完成，检查 info 目录内容:"
+          ls -la info/ 2>/dev/null || echo "警告：未成功创建 info 目录"
+      # ======【新增】结束 ======
 
-      # 6. 更新APK文件
       - name: Update APK
         run: cp history/Phigros.apk resource/Phigros.apk
 
-      # 7. 设置Python环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 8. 安装Python依赖
       - name: Install Python dependencies
         working-directory: ./resource
-        run: |
-          echo "正在安装Python依赖包..."
-          pip install UnityPy fsb5
-          echo "依赖安装完成。"
+        run: pip install UnityPy fsb5
 
-      # 9. 清理旧的输出文件
       - name: Clean old outputs
         working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 10. 【核心】通过修改 config.ini 进行分批处理
+      # 【核心】步骤10：通过修改 config.ini 进行分批
       - name: Run resource.py by Type (Modify Config)
         working-directory: ./resource
         run: |
           echo "开始通过修改配置分批处理..."
           echo "总开始时间: $(date)"
           
-          # 定义处理顺序（包含 avatar）
+          # 定义处理顺序（可根据需要调整）
           RESOURCE_TYPES=("avatar" "Chart" "illustrationBlur" "illustrationLowRes" "illustration" "music")
           
           # 记录原始配置内容，用于最后恢复
@@ -115,6 +104,7 @@ jobs:
             echo "批次开始时间: $(date)"
             
             # 1. 修改 config.ini：将所有类型设为 False，然后将当前类型设为 True
+            # 注意：脚本配置中 'Chart' 首字母大写，而其他为小写
             sed -i "s/^\(avatar\|Chart\|illustrationBlur\|illustrationLowRes\|illustration\|music\) = .*$/\1 = False/" config.ini
             sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini
             
@@ -143,7 +133,7 @@ jobs:
           echo "✅ 所有类型分批处理完成"
           echo "总结束时间: $(date)"
 
-      # 11. 检查生成的资源
+      # 步骤11-14：资源检查和发布阶段
       - name: Check generated resources
         working-directory: ./resource
         run: |
@@ -156,7 +146,6 @@ jobs:
             fi
           done
 
-      # 12. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -165,7 +154,6 @@ jobs:
           ref: master
           path: build
 
-      # 13. 发布资源到构建仓库
       - name: Publish resources
         working-directory: ./resource
         run: |
@@ -173,7 +161,6 @@ jobs:
             avatar chart illustration illustrationBlur illustrationLowRes music \
             ../build/
 
-      # 14. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
@@ -181,6 +168,6 @@ jobs:
           git config user.email "github-actions@users.noreply.github.com"
           git add .
           if ! git diff --cached --quiet; then
-            git commit -m "自动更新资源 (完整分批) - $(date +'%Y-%m-%d %H:%M:%S')"
+            git commit -m "自动更新资源 (配置分批) - $(date +'%Y-%m-%d %H:%M:%S')"
             git push origin master
           fi
