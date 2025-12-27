@@ -1,12 +1,12 @@
-name: Phigros Batch Extraction to husbvt
+name: Phigros Batch Extraction Fixed
 
 on:
-  workflow_dispatch: # 手动触发运行
+  workflow_dispatch:
 
 jobs:
-  build-and-push:
+  build:
     runs-on: ubuntu-latest
-    timeout-minutes: 150 # 提取大型资源需要充足时间
+    timeout-minutes: 150
 
     steps:
       - name: 1. 检出脚本仓库
@@ -14,84 +14,69 @@ jobs:
         with:
           path: resource
 
-      - name: 2. 准备 APK 文件
-        # 请确保此处逻辑能将 APK 放置于 resource/Phigros.apk
+      - name: 2. 下载并强制定位 APK
+        # 这一步整合了下载、解压和路径纠正
         run: |
-          sudo apt-get update && sudo apt-get install -y p7zip-full
-          # 假设您已有的下载逻辑...
-          # mv 下载好的.apk resource/Phigros.apk
-          echo "APK 就绪检查"
+          sudo apt-get update && sudo apt-get install -y p7zip-full rsync
+          
+          # --- 这里请确保你的下载逻辑正常运行 ---
+          # 假设你是从 Release 下载的 7z 分卷包
+          uses: robinraju/release-downloader@v1.10
+          with:
+            repository: "SteveZMTstudios/Phigros-history"
+            latest: true
+            fileName: "*.7z.*"
+            out-file-path: "./downloads"
+          env:
+            GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+          # 解压文件
+          7z x "downloads/*.7z.001" -o./extracted -y || echo "7z 解压跳过或失败"
+          
+          # 【核心修复】全盘搜索 APK 并强制移动到脚本目录
+          echo "🔎 正在定位 APK 文件..."
+          FOUND_APK=$(find . -name "*.apk" -type f | head -n 1)
+          if [ -z "$FOUND_APK" ]; then
+            echo "❌ 错误：工作区内找不到任何 .apk 文件！"
+            exit 1
+          fi
+          echo "✅ 找到 APK: $FOUND_APK"
+          # 确保文件被移动到 resource 目录下，并统一命名为 Phigros.apk
+          cp "$FOUND_APK" ./resource/Phigros.apk
+          ls -lh ./resource/Phigros.apk
 
-      - name: 3. 环境配置与依赖安装
+      - name: 3. 环境与依赖安装
         run: |
           sudo apt-get install -y libogg-dev libvorbis-dev
           pip install UnityPy==1.10.18 fsb5
 
-      - name: 4. 检出目标存储仓库
+      - name: 4. 检出目标仓库 (husbvt)
         uses: actions/checkout@v4
         with:
           repository: husbvt/Phigros_Resource_Build
-          token: ${{ secrets.BUILD_PAT }} # 需在 Secrets 中配置 PAT
+          token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 5. 执行分批自动化提取 (方案二)
+      - name: 5. 自动化分批提取
         working-directory: ./resource
         run: |
-          # 降低并发以防止 GitHub Actions 7GB 内存溢出
+          # 再次确认文件存在，双重保险
+          if [ ! -f "Phigros.apk" ]; then echo "❌ APK 丢失！"; exit 1; fi
+          
+          # 强制将源码并发改为 1，防止 7GB 内存溢出导致提取到一半卡死
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
 
-          # 定义自动化提取函数
           run_batch() {
             local task=$1
             echo "------------------------------------------"
-            echo "🚀 正在处理批次: $task"
-            
-            # 关闭所有开关，仅开启当前任务
+            echo "🚀 执行任务: $task"
+            # 自动化修改 config.ini 里的开关
             sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
             if [ "$task" == "Chart" ]; then
               sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
             else
               sed -i -E "s/^$task[[:space:]]*=.*/$task = True/I" config.ini
             fi
-
-            # 执行脚本，对每一项设置超时保护
-            timeout 2400 python resource.py Phigros.apk || echo "⚠️ $task 提取出现异常，继续下一步"
-          }
-
-          # 按顺序执行提取
-          run_batch "avatar"
-          run_batch "Chart"
-          run_batch "music"
-          run_batch "illustration"
-
-      - name: 6. 健壮同步与推送至 husbvt 仓库
-        working-directory: ./resource
-        env:
-          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
-          DEST_REPO: "husbvt/Phigros_Resource_Build"
-        run: |
-          # 基础配置
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global core.quotepath false # 防止中文文件名转义
-
-          # 同步生成的文件夹到目标仓库目录
-          for folder in avatar chart illustration music; do
-            if [ -d "$folder" ] && [ "$(ls -A $folder 2>/dev/null)" ]; then
-              echo "✅ 同步 $folder 文件夹..."
-              mkdir -p "../build_repo/$folder"
-              # 采用增量同步，不使用 --delete 避免覆盖历史文件
-              rsync -av "$folder/" "../build_repo/$folder/"
-            fi
-          done
-
-          # 提交与推送
-          cd ../build_repo
-          git add .
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
-            # 使用包含 PAT 的 URL 强制推送至 master
-            git push "https://${AUTH_TOKEN}@github.com/${DEST_REPO}.git" master --force
-          else
-            echo "✨ 没有任何新文件产生，跳过推送。"
-          fi
+            # 运行提取
+            python resource.py Phigros.apk || echo "⚠️
+            
