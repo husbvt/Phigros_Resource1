@@ -1,4 +1,4 @@
-name: Build Phigros Resources (Lite & Fast)
+name: Build Phigros Resources (Isolated Batch)
 
 on:
   workflow_dispatch:
@@ -6,17 +6,22 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
 
     steps:
-      # 1. 先检出脚本仓库
+      # 1. 环境初始化
       - name: Checkout Script Repo
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # 2. 创建目录并下载资源
-      - name: Download Release Assets
+      # 2. 下载并解压 APK
+      - name: Download & Extract APK
+        run: |
+          sudo apt-get update && sudo apt-get install -y p7zip-full
+          mkdir -p history
+          # 此处使用你之前的下载逻辑（robinraju/release-downloader）
+          # 请确保 secrets.GITHUB_TOKEN 存在
         uses: robinraju/release-downloader@v1.10
         with:
           repository: "SteveZMTstudios/Phigros-history"
@@ -26,104 +31,89 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 解压并将 APK 放入 resource 目录
-      - name: Extract & Prepare APK
+      - name: Prepare APK File
         run: |
-          sudo apt-get update && sudo apt-get install -y p7zip-full
           shopt -s nullglob
           cd history
           7z x "*.7z.001" -y
           APK_FILE=$(find . -name "*.apk" | head -n 1)
-          if [ -z "$APK_FILE" ]; then
-            echo "❌ 未找到 APK"
-            exit 1
-          fi
+          if [ -z "$APK_FILE" ]; then exit 1; fi
           mv "$APK_FILE" ../resource/Phigros.apk
-          echo "✅ APK 已就绪"
 
-      # 4. 获取 Info 描述文件
-      - name: Checkout Info Directory
+      # 3. 设置 Info 描述文件
+      - name: Checkout Info
         uses: actions/checkout@v4
         with:
           repository: 7aGiven/Phigros_Resource
           ref: info
           path: info_source
 
-      - name: Setup Info Directory
+      - name: Setup Info
         run: |
           mkdir -p resource/info
           cp -rn info_source/* resource/info/ 2>/dev/null || true
 
-      # 5. 设置 Python 环境
+      # 4. 设置 Python 与依赖
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 6. 【核心加速步骤】分批提取核心资源
-      - name: Batch Extraction (Lite)
-        working-directory: ./resource
+      - name: Install Deps
         run: |
-          # 安装依赖（使用PyPI版fsb5）
           sudo apt-get install -y libogg-dev libvorbis-dev
           pip install UnityPy fsb5
-          
-          # 定义需要提取的核心类型（剔除了模糊图部分以防卡死）
-          TYPES=("avatar" "Chart" "illustration" "music")
-          
-          # 备份配置
-          cp config.ini config.ini.bak
-          
-          for CURRENT in "${TYPES[@]}"; do
-            echo "------------------------------------------"
-            echo "🚀 正在处理核心批次: $CURRENT"
-            
-            # 关闭所有可能的开关，防止脚本多跑
-            for T in "avatar" "Chart" "illustration" "illustrationBlur" "illustrationLowRes" "music"; do
-              sed -i -E "s/^$T[[:space:]]*=[[:space:]]*.*/$T = False/I" config.ini
-            done
-            
-            # 仅开启当前项
-            sed -i -E "s/^$CURRENT[[:space:]]*=[[:space:]]*.*/$CURRENT = True/I" config.ini
-            
-            # 运行脚本，设置 15 分钟单项超时
-            timeout 900 python resource.py Phigros.apk || echo "⚠️ $CURRENT 批次超时或失败，跳过"
-            
-            # 强制内存回收
-            python3 -c "import gc; gc.collect()"
-            sleep 5
-          done
-          
-          # 恢复配置
-          mv config.ini.bak config.ini
 
-      # 7. 检出目标发布仓库
-      - name: Checkout Build Repository
+      # 5. 【核心步骤】分进程提取（彻底解决卡死）
+      - name: Process Isolated Extraction
+        working-directory: ./resource
+        run: |
+          # 定义一个重置配置的函数
+          reset_config() {
+            sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          }
+
+          # 批次 1: 头像与谱面 (轻量)
+          echo "🚀 运行批次: Avatar & Chart"
+          reset_config
+          sed -i -E "s/^avatar[[:space:]]*=.*/avatar = True/I" config.ini
+          sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
+          python resource.py Phigros.apk || echo "Avatar/Chart 部分提取失败"
+
+          # 批次 2: 音乐 (中等)
+          echo "🚀 运行批次: Music"
+          reset_config
+          sed -i -E "s/^music[[:space:]]*=.*/music = True/I" config.ini
+          timeout 600 python resource.py Phigros.apk || echo "音乐提取超时，尝试保留已生成文件"
+
+          # 批次 3: 插图原画 (重量 - 最易卡死)
+          echo "🚀 运行批次: Illustration"
+          reset_config
+          sed -i -E "s/^illustration[[:space:]]*=.*/illustration = True/I" config.ini
+          # 这里给插图设置 15 分钟超时，如果卡死会强行终止进程并进入下一步同步
+          timeout 900 python resource.py Phigros.apk || echo "⚠️ 插图提取因内存或时间问题中断"
+
+      # 6. 发布产物
+      - name: Checkout Build Repo
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.BUILD_REPO }}
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      # 8. 同步并推送
       - name: Sync & Push
         working-directory: ./resource
         run: |
-          # 确保输出目录不为空再进行同步
+          # 仅同步确实生成了内容的文件夹
           for folder in avatar chart illustration music; do
             if [ -d "$folder" ] && [ "$(ls -A $folder)" ]; then
               mkdir -p ../build_repo/$folder
               rsync -av --delete "$folder/" "../build_repo/$folder/"
             fi
           done
-          
           cd ../build_repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
           git add .
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto Update Phigros Resources (Lite) - $(date +'%Y-%m-%d %H:%M')"
-            git push origin master
-          else
-            echo "没有检测到资源更新"
-          fi
+          git commit -m "Auto Update (Isolated Mode)" || exit 0
+          git push origin master
