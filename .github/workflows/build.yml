@@ -113,61 +113,37 @@ jobs:
           # 备份原文件
           cp resource.py resource.py.backup
           
-          # 使用Python直接创建修复脚本
-          python3 -c "
-# 创建修复脚本
+          # 使用更简单的方法修改文件
+          python3 << "EOF"
 import re
 
 with open('resource.py', 'r', encoding='utf-8') as f:
     content = f.read()
 
-# 查找Chart处理代码的位置
+print("正在查找Chart处理代码...")
+
 # 方法1：查找包含Chart的处理代码
-lines = content.split('\n')
-new_lines = []
-skip_added = False
-
-for i, line in enumerate(lines):
-    new_lines.append(line)
+if '"Chart" in obj.path' in content and 'if obj.type.name == "TextAsset"' in content:
+    print("找到Chart处理行")
     
-    # 查找 if obj.type.name == \"TextAsset\" and \"Chart\" in obj.path:
-    if '\"Chart\" in obj.path' in line and 'if obj.type.name == \"TextAsset\"' in line and not skip_added:
-        print(f'找到Chart处理行: {line}')
-        # 在下一行添加跳过逻辑
-        skip_code = '''            # 跳过可能卡住的文件
-            skip_files = [\"TEmoji\", \"emoji\", \"Emoji\", \"Tutorial\", \"Debug\", \"Test\"]
-            if any(skip_file in obj.path for skip_file in skip_files):
-                print(f\"跳过可疑文件: {obj.path}\")
-                continue'''
-        new_lines.append(skip_code)
-        skip_added = True
-
-if not skip_added:
-    print('未找到Chart处理行，尝试其他模式...')
-    # 尝试其他模式
-    pattern = r'(if obj\.type\.name == \"TextAsset\".*?Chart.*?:)'
-    def add_skip(match):
-        return match.group(1) + '''
-            # 跳过可能卡住的文件
-            skip_files = [\"TEmoji\", \"emoji\", \"Emoji\", \"Tutorial\", \"Debug\", \"Test\"]
-            if any(skip_file in obj.path for skip_file in skip_files):
-                print(f\"跳过可疑文件: {obj.path}\")
-                continue'''
+    # 使用正则表达式添加跳过逻辑
+    pattern = r'(if obj\.type\.name == "TextAsset".*?"Chart" in obj\.path.*?:)'
     
-    new_content = re.sub(pattern, add_skip, content, flags=re.DOTALL)
+    def add_skip_logic(match):
+        original = match.group(1)
+        return original + '\n            # 跳过可能卡住的文件\n            skip_files = ["TEmoji", "emoji", "Emoji", "Tutorial", "Debug", "Test"]\n            if any(skip_file in obj.path for skip_file in skip_files):\n                print(f"跳过可疑文件: {obj.path}")\n                continue'
+    
+    new_content = re.sub(pattern, add_skip_logic, content, flags=re.DOTALL)
     
     if new_content != content:
         with open('resource.py', 'w', encoding='utf-8') as f:
             f.write(new_content)
-        print('✅ Chart修复补丁已应用（模式2）')
+        print("✅ Chart修复补丁已应用")
     else:
-        print('❌ 无法找到Chart处理代码，使用原始文件')
+        print("❌ 无法应用补丁，保持原文件")
 else:
-    new_content = '\n'.join(new_lines)
-    with open('resource.py', 'w', encoding='utf-8') as f:
-        f.write(new_content)
-    print('✅ Chart修复补丁已应用（模式1）')
-"
+    print("❌ 未找到Chart处理代码，检查resource.py结构")
+EOF
 
       # 13. 核心分批处理
       - name: Run Resource Extraction
