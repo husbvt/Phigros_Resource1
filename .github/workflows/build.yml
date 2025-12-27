@@ -11,10 +11,11 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # 步骤 1-9：准备阶段 (与之前完全相同)
+      # 1. 创建历史目录
       - name: Create History Directory
         run: mkdir -p history
 
+      # 2. 从Release下载全部分卷文件
       - name: Download ALL Release Assets
         uses: robinraju/release-downloader@v1.10
         with:
@@ -25,9 +26,11 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 3. 安装解压工具
       - name: Install p7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
+      # 4. 解压分卷包并提取APK
       - name: Extract & Prepare APK
         working-directory: ./history
         run: |
@@ -37,55 +40,79 @@ jobs:
           cp "$APK" Phigros.apk
           rm -f *.7z.*
 
+      # 5. 检出资源处理脚本仓库
       - name: Checkout Phigros_Resource1
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # ======【新增】开始：获取 info 目录 ======
+      # 6. 【关键修正】获取并设置 info 目录
       - name: Checkout Info Directory
         uses: actions/checkout@v4
         with:
           repository: 7aGiven/Phigros_Resource
           ref: info
-          path: info_temp
+          path: info_source
 
-      - name: Move Info Directory
+      - name: Setup Info Directory
         working-directory: ./resource
         run: |
-          echo "正在合并 info 目录..."
-          # 检查并合并下载的 info 内容到 resource/info
-          if [ -d "../info_temp/info" ]; then
-            echo "找到 info 子目录，正在合并..."
-            cp -r ../info_temp/info/* info/ 2>/dev/null || true
-          else
-            echo "info_temp 根目录即为所需文件，正在合并..."
-            cp -r ../info_temp/* info/ 2>/dev/null || true
+          echo "=== 设置 info 目录 ==="
+          # 确保目标目录存在
+          mkdir -p info
+          
+          echo "1. 源目录 (info_source) 内容:"
+          ls -la ../info_source/
+          
+          echo "2. 正在复制所有文件到 resource/info ..."
+          # 复制所有文件，-n 表示不覆盖已存在文件
+          cp -rn ../info_source/* info/ 2>/dev/null || true
+          
+          echo "3. 目标目录 (resource/info) 内容:"
+          ls -la info/
+          
+          echo "4. 关键文件检查:"
+          REQUIRED_FILES=("tmp.tsv" "difficulty.tsv")
+          ALL_FOUND=true
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [ -f "info/$file" ]; then
+              echo "   ✅ 找到: info/$file"
+            else
+              echo "   ❌ 缺失: info/$file (脚本运行将失败)"
+              ALL_FOUND=false
+            fi
+          done
+          
+          if [ "$ALL_FOUND" = false ]; then
+            echo "错误：必需的文件缺失，请检查远程仓库结构。"
+            exit 1
           fi
-          # 清理临时目录
-          rm -rf ../info_temp
-          echo "合并完成，检查 info 目录内容:"
-          ls -la info/ 2>/dev/null || echo "警告：未成功创建 info 目录"
-      # ======【新增】结束 ======
 
+      # 7. 更新APK文件
       - name: Update APK
         run: cp history/Phigros.apk resource/Phigros.apk
 
+      # 8. 设置Python环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
+      # 9. 安装Python依赖
       - name: Install Python dependencies
         working-directory: ./resource
-        run: pip install UnityPy fsb5
+        run: |
+          echo "正在安装Python依赖包..."
+          pip install UnityPy fsb5
+          echo "依赖安装完成。"
 
+      # 10. 清理旧的输出文件
       - name: Clean old outputs
         working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 【核心】步骤10：通过修改 config.ini 进行分批
+      # 11. 【核心】通过修改 config.ini 进行分批处理
       - name: Run resource.py by Type (Modify Config)
         working-directory: ./resource
         run: |
@@ -133,7 +160,7 @@ jobs:
           echo "✅ 所有类型分批处理完成"
           echo "总结束时间: $(date)"
 
-      # 步骤11-14：资源检查和发布阶段
+      # 12. 检查生成的资源
       - name: Check generated resources
         working-directory: ./resource
         run: |
@@ -146,6 +173,7 @@ jobs:
             fi
           done
 
+      # 13. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -154,6 +182,7 @@ jobs:
           ref: master
           path: build
 
+      # 14. 发布资源到构建仓库
       - name: Publish resources
         working-directory: ./resource
         run: |
@@ -161,6 +190,7 @@ jobs:
             avatar chart illustration illustrationBlur illustrationLowRes music \
             ../build/
 
+      # 15. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
