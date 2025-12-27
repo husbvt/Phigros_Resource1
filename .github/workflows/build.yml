@@ -10,72 +10,127 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Phigros-history
-        uses: actions/checkout@v4
-        with:
-          repository: SteveZMTstudios/Phigros-history
-          path: history
+      # 1. 创建历史目录
+      - name: Create History Directory
+        run: mkdir -p history
 
+      # 2. 下载Release中的第一个分卷文件（会自动关联后续分卷）
+      - name: Download Release Assets
+        uses: robinraju/release-downloader@v1.10
+        with:
+          repository: "SteveZMTstudios/Phigros-history"
+          latest: true
+          # 只下载第一个分卷，解压时会自动查找后续分卷
+          fileName: "*.7z.001"
+          out-file-path: "./history"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. 检查下载的分卷文件
+      - name: Check Downloaded Archives
+        working-directory: ./history
+        run: |
+          echo "=== 下载的文件列表 ==="
+          ls -la *.7z.* 2>/dev/null | sort || echo "未找到.7z分卷文件"
+          
+          # 验证第一个分卷是否存在
+          FIRST_VOLUME=$(ls *.7z.001 2>/dev/null | head -n 1)
+          if [ -z "$FIRST_VOLUME" ]; then
+            echo "❌ 错误：未找到.7z.001分卷文件"
+            exit 1
+          fi
+          
+          echo "✅ 找到第一个分卷：$FIRST_VOLUME"
+          echo "如果需要后续分卷，请确保它们在同一目录中"
+
+      # 4. 安装解压工具
       - name: Install p7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
-      # >>> 这里是新添加的调试步骤 <<<
-      - name: Debug List History Directory (Before Extract)
-        working-directory: ./history
-        run: |
-          echo "=== 列出 history 目录的所有文件 ==="
-          find . -type f | sort || echo "find命令执行失败"
-          echo "=== 列出所有 .7z* 文件 ==="
-          find . -name "*.7z*" 2>/dev/null | sort || echo "未找到.7z文件"
-          echo "=== 列出所有 .apk 文件 ==="
-          find . -name "*.apk" 2>/dev/null | sort || echo "未找到.apk文件"
-
+      # 5. 解压分卷包（自动处理002、003等后续分卷）
       - name: Extract & Prepare APK
         working-directory: ./history
         run: |
-          shopt -s nullglob
-          echo "开始解压，当前目录下的.7z.001文件有："
-          ls -la *.7z.001 2>/dev/null || echo "未直接匹配到*.7z.001文件"
-
-          for f in *.7z.001; do
-            echo "解压: $f"
-            7z x "$f"
-          done
-
-          echo "=== 解压后搜索APK文件 ==="
-          APK=$(find . -name "*.apk" | head -n 1)
-          if [ -z "$APK" ]; then
-            echo "❌ 错误：未找到任何.apk文件。"
-            echo "当前目录结构："
-            find . -type f | sort
+          echo "开始解压分卷压缩包..."
+          
+          # 查找第一个分卷
+          FIRST_VOLUME=$(ls *.7z.001 2>/dev/null | head -n 1)
+          if [ -z "$FIRST_VOLUME" ]; then
+            echo "❌ 错误：找不到.7z.001文件进行解压"
+            ls -la
             exit 1
           fi
+          
+          echo "使用分卷文件解压：$FIRST_VOLUME"
+          
+          # 关键：7z会通过第一个分卷自动找到002、003等后续分卷
+          if ! 7z x "$FIRST_VOLUME" -y; then
+            echo "❌ 解压失败！可能的原因："
+            echo "1. 后续分卷(.7z.002/.7z.003)缺失"
+            echo "2. 分卷文件损坏"
+            echo "3. 需要下载全部分卷"
+            echo "当前目录文件："
+            ls -la *.7z.* 2>/dev/null || echo "无.7z文件"
+            exit 1
+          fi
+          
+          echo "✅ 解压完成"
 
-          echo "找到APK: $APK"
+      # 6. 查找并准备APK文件
+      - name: Find and Prepare APK
+        working-directory: ./history
+        run: |
+          echo "正在查找APK文件..."
+          
+          # 多种可能的APK文件名模式
+          APK=$(find . -type f \( -name "*.apk" -o -name "*.xapk" \) | head -n 1)
+          
+          if [ -z "$APK" ]; then
+            echo "❌ 错误：未找到APK文件"
+            echo "解压后的文件结构："
+            find . -type f | sort
+            echo "=== 可能包含APK的目录 ==="
+            find . -type d | while read dir; do
+              count=$(find "$dir" -name "*.apk" -o -name "*.xapk" 2>/dev/null | wc -l)
+              if [ $count -gt 0 ]; then
+                echo "$dir: $count 个APK文件"
+              fi
+            done
+            exit 1
+          fi
+          
+          echo "✅ 找到APK：$APK"
           cp "$APK" Phigros.apk
+          echo "✅ 已复制为 Phigros.apk"
 
+      # 7. 检出资源处理脚本仓库
       - name: Checkout Phigros_Resource1
         uses: actions/checkout@v4
         with:
           path: resource
 
+      # 8. 更新APK到资源目录
       - name: Update APK
         run: cp history/Phigros.apk resource/Phigros.apk
 
+      # 9. 设置Python环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
+      # 10. 清理旧的输出文件
       - name: Clean old outputs
         working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
+      # 11. 运行资源提取脚本
       - name: Run resources.py
         working-directory: resource
         run: python resources.py
 
+      # 12. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -84,6 +139,7 @@ jobs:
           ref: master
           path: build
 
+      # 13. 发布资源到构建仓库
       - name: Publish resources
         working-directory: ./resource
         run: |
@@ -96,6 +152,7 @@ jobs:
             music \
             ../build/
 
+      # 14. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
@@ -103,8 +160,8 @@ jobs:
           git config user.email "github-actions@users.noreply.github.com"
           git add .
           if git diff --cached --quiet; then
-            echo "No changes"
+            echo "没有更改需要提交"
           else
-            git commit -m "auto update"
+            git commit -m "自动更新资源 $(date +'%Y-%m-%d %H:%M')"
             git push origin master
           fi
