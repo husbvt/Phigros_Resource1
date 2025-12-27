@@ -30,7 +30,7 @@ jobs:
       - name: Install System Tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y p7zip-full wget
+          sudo apt-get install -y p7zip-full wget rsync curl
 
       # 4. 安装音频编解码器库
       - name: Install Audio Codec Libraries
@@ -246,7 +246,7 @@ EOF
             fi
             
             # 修改配置
-            sed -i "s/^\(avatar\|Chart\|illustration\|music\) = .*$/\\1 = False/" config.ini 2>/dev/null
+            sed -i "s/^\(avatar\|chart\|illustration\|music\) = .*$/\\1 = False/" config.ini 2>/dev/null
             sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini 2>/dev/null
             
             echo "启动提取进程..."
