@@ -29,7 +29,7 @@ jobs:
       - name: Install p7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
-      # 4. 安装音频编解码器库 (解决fsb5依赖问题)
+      # 4. 安装音频编解码器库
       - name: Install audio codec libraries
         run: |
           echo "安装音频编解码器库..."
@@ -95,15 +95,60 @@ jobs:
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 11. 运行资源提取脚本
+      # 11. 【关键】增加系统内存和交换空间
+      - name: Increase system resources
+        run: |
+          echo "=== 增加系统资源 ==="
+          # 增加交换空间 (4GB)
+          sudo fallocate -l 4G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          
+          # 调整系统限制
+          sudo sysctl -w vm.swappiness=60
+          sudo sysctl -w vm.vfs_cache_pressure=50
+          
+          echo "✅ 系统资源已优化"
+          free -h
+          df -h
+
+      # 12. 运行资源提取脚本（带资源监控）
       - name: Run resource.py
         working-directory: resource
         run: |
           echo "正在运行 resource.py 脚本..."
-          python resource.py Phigros.apk
-          echo "✅ 资源提取完成"
+          echo "开始时间: $(date)"
+          
+          # 监控资源使用的后台任务
+          (while true; do
+            echo "=== 资源监控 $(date +%H:%M:%S) ==="
+            free -m | awk 'NR==2{printf "内存: %.2f%% (%.0fM/%.0fM)\n", $3/$2*100, $3/1024, $2/1024}'
+            df -h . | awk 'NR==2{printf "磁盘: %s已用(剩余%s)\n", $5, $4}'
+            sleep 30
+          done) &
+          MONITOR_PID=$!
+          
+          # 运行脚本，增加Python内存管理和超时设置
+          timeout 1800 python -X pycache_prefix=/tmp/pycache -X warn_default_encoding resource.py Phigros.apk || SCRIPT_EXIT=$?
+          
+          # 停止监控
+          kill $MONITOR_PID 2>/dev/null || true
+          
+          # 检查退出状态
+          if [ ${SCRIPT_EXIT:-0} -eq 0 ]; then
+            echo "✅ 资源提取完成"
+            echo "结束时间: $(date)"
+          elif [ ${SCRIPT_EXIT:-0} -eq 124 ]; then
+            echo "⚠️ 脚本执行超时 (30分钟)"
+            exit 1
+          else
+            echo "❌ 脚本执行失败，退出代码: ${SCRIPT_EXIT}"
+            echo "最后处理的文件可能在上一行日志中"
+            exit 1
+          fi
 
-      # 12. 调试：检查生成的资源
+      # 13. 调试：检查生成的资源
       - name: Debug - Check generated resources
         working-directory: ./resource
         run: |
@@ -119,7 +164,7 @@ jobs:
             fi
           done
 
-      # 13. 检出构建产物仓库
+      # 14. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -127,16 +172,6 @@ jobs:
           token: ${{ secrets.BUILD_PAT }}
           ref: master
           path: build
-
-      # 14. 调试：检查检出是否成功
-      - name: Debug - Check build repo
-        working-directory: ./build
-        run: |
-          echo "=== build目录状态 ==="
-          pwd
-          ls -la
-          echo "=== Git远程仓库 ==="
-          git remote -v
 
       # 15. 发布资源到构建仓库
       - name: Publish resources
@@ -153,21 +188,7 @@ jobs:
             ../build/
           echo "✅ 资源同步完成"
 
-      # 16. 调试：检查同步结果
-      - name: Debug - Check sync result
-        working-directory: ./build
-        run: |
-          echo "=== 同步后build目录 ==="
-          du -sh * 2>/dev/null || echo "目录为空"
-          echo "=== 文件数量统计 ==="
-          for dir in avatar chart illustration illustrationBlur illustrationLowRes music; do
-            if [ -d "$dir" ]; then
-              count=$(find "$dir" -type f | wc -l)
-              echo "$dir: $count 个文件"
-            fi
-          done
-
-      # 17. 提交并推送更改
+      # 16. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
