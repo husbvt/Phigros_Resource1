@@ -28,6 +28,20 @@ jobs:
       # 3. 安装解压工具
       - name: Install p7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
+        # 3.1 [新增] 安装音频编解码器库
+      - name: Install audio codec libraries
+        run: |
+          echo "安装音频编解码器库..."
+          sudo apt-get update
+          sudo apt-get install -y \
+            libvorbis-dev \
+            libvorbis0a \
+            libvorbisenc2 \
+            libvorbisfile3 \
+            ffmpeg \
+            libavcodec-dev
+          echo "音频库安装完成"
+
 
       # 4. 解压分卷包并提取APK
       - name: Extract & Prepare APK
