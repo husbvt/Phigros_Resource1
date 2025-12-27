@@ -12,7 +12,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v3
         with:
-          ref: main # 你的分支名
+          ref: master # 你的分支名
 
       - name: Sync upstream
         uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
