@@ -1,4 +1,4 @@
-name: Build Phigros Resources (修复版)
+name: Build Phigros Resources (修复Chart卡住问题)
 
 on:
   workflow_dispatch:
@@ -113,39 +113,61 @@ jobs:
           # 备份原文件
           cp resource.py resource.py.backup
           
-          # 创建补丁脚本
-          cat > fix_chart.py << 'EOF'
+          # 使用Python直接创建修复脚本
+          python3 -c "
+# 创建修复脚本
 import re
 
 with open('resource.py', 'r', encoding='utf-8') as f:
     content = f.read()
 
 # 查找Chart处理代码的位置
-# 先找到处理TextAsset的部分
-chart_pattern = r'(\s*if obj\.type\.name == "TextAsset".*?Chart.*?:)'
+# 方法1：查找包含Chart的处理代码
+lines = content.split('\n')
+new_lines = []
+skip_added = False
 
-def add_skip_logic(match):
-    original_line = match.group(1)
-    skip_code = '''
-            # 跳过可能卡住的文件
-            skip_files = ["TEmoji", "emoji", "Emoji", "Tutorial", "Debug", "Test"]
+for i, line in enumerate(lines):
+    new_lines.append(line)
+    
+    # 查找 if obj.type.name == \"TextAsset\" and \"Chart\" in obj.path:
+    if '\"Chart\" in obj.path' in line and 'if obj.type.name == \"TextAsset\"' in line and not skip_added:
+        print(f'找到Chart处理行: {line}')
+        # 在下一行添加跳过逻辑
+        skip_code = '''            # 跳过可能卡住的文件
+            skip_files = [\"TEmoji\", \"emoji\", \"Emoji\", \"Tutorial\", \"Debug\", \"Test\"]
             if any(skip_file in obj.path for skip_file in skip_files):
-                print(f"跳过可疑文件: {obj.path}")
+                print(f\"跳过可疑文件: {obj.path}\")
+                continue'''
+        new_lines.append(skip_code)
+        skip_added = True
+
+if not skip_added:
+    print('未找到Chart处理行，尝试其他模式...')
+    # 尝试其他模式
+    pattern = r'(if obj\.type\.name == \"TextAsset\".*?Chart.*?:)'
+    def add_skip(match):
+        return match.group(1) + '''
+            # 跳过可能卡住的文件
+            skip_files = [\"TEmoji\", \"emoji\", \"Emoji\", \"Tutorial\", \"Debug\", \"Test\"]
+            if any(skip_file in obj.path for skip_file in skip_files):
+                print(f\"跳过可疑文件: {obj.path}\")
                 continue'''
     
-    return original_line + skip_code
-
-new_content = re.sub(chart_pattern, add_skip_logic, content, flags=re.DOTALL)
-
-with open('resource.py', 'w', encoding='utf-8') as f:
-    f.write(new_content)
-
-print("✅ Chart修复补丁已应用")
-print("将在处理Chart时跳过可疑文件")
-EOF
-
-          python3 fix_chart.py
-          rm -f fix_chart.py
+    new_content = re.sub(pattern, add_skip, content, flags=re.DOTALL)
+    
+    if new_content != content:
+        with open('resource.py', 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        print('✅ Chart修复补丁已应用（模式2）')
+    else:
+        print('❌ 无法找到Chart处理代码，使用原始文件')
+else:
+    new_content = '\n'.join(new_lines)
+    with open('resource.py', 'w', encoding='utf-8') as f:
+        f.write(new_content)
+    print('✅ Chart修复补丁已应用（模式1）')
+"
 
       # 13. 核心分批处理
       - name: Run Resource Extraction
@@ -185,7 +207,7 @@ EOF
             
             if [ "$CURRENT_TYPE" = "Chart" ]; then
               echo "📊 Chart处理（已应用跳过补丁）"
-              timeout 1800 python resource.py Phigros.apk 2>&1 | tail -100
+              timeout 1800 python resource.py Phigros.apk 2>&1 | tail -150
             else
               timeout 900 python resource.py Phigros.apk 2>&1 | tail -50
             fi
