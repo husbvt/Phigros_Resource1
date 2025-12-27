@@ -1,4 +1,4 @@
-name: Build Phigros Resources (Final Fixed V2)
+name: Build Phigros Resources (Lite & Fast)
 
 on:
   workflow_dispatch:
@@ -6,20 +6,16 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
 
     steps:
-      # 1. 先检出脚本仓库（必须放在最前面，防止覆盖后面的文件）
+      # 1. 先检出脚本仓库
       - name: Checkout Script Repo
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # 2. 创建下载目录
-      - name: Create History Directory
-        run: mkdir -p history
-
-      # 3. 下载资源
+      # 2. 创建目录并下载资源
       - name: Download Release Assets
         uses: robinraju/release-downloader@v1.10
         with:
@@ -30,7 +26,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 4. 解压并将 APK 放入 resource 目录
+      # 3. 解压并将 APK 放入 resource 目录
       - name: Extract & Prepare APK
         run: |
           sudo apt-get update && sudo apt-get install -y p7zip-full
@@ -42,11 +38,10 @@ jobs:
             echo "❌ 未找到 APK"
             exit 1
           fi
-          # 移动到 resource 根目录
           mv "$APK_FILE" ../resource/Phigros.apk
-          echo "✅ APK 已移动至: resource/Phigros.apk"
+          echo "✅ APK 已就绪"
 
-      # 5. 获取 Info 描述文件
+      # 4. 获取 Info 描述文件
       - name: Checkout Info Directory
         uses: actions/checkout@v4
         with:
@@ -59,44 +54,50 @@ jobs:
           mkdir -p resource/info
           cp -rn info_source/* resource/info/ 2>/dev/null || true
 
-      # 6. 设置 Python 环境
+      # 5. 设置 Python 环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 7. 安装依赖与运行处理（分批逻辑）
-      - name: Batch Extraction
+      # 6. 【核心加速步骤】分批提取核心资源
+      - name: Batch Extraction (Lite)
         working-directory: ./resource
         run: |
+          # 安装依赖（使用PyPI版fsb5）
+          sudo apt-get install -y libogg-dev libvorbis-dev
           pip install UnityPy fsb5
           
-          # 再次强制确认文件存在
-          if [ ! -f "Phigros.apk" ]; then
-            echo "❌ 严重错误：Phigros.apk 丢失！"
-            ls -R ..
-            exit 1
-          fi
-
-          TYPES=("avatar" "Chart" "illustration" "illustrationBlur" "illustrationLowRes" "music")
+          # 定义需要提取的核心类型（剔除了模糊图部分以防卡死）
+          TYPES=("avatar" "Chart" "illustration" "music")
+          
+          # 备份配置
           cp config.ini config.ini.bak
           
           for CURRENT in "${TYPES[@]}"; do
             echo "------------------------------------------"
-            echo "🚀 正在提取: $CURRENT"
-            # 修改配置
-            for T in "${TYPES[@]}"; do
+            echo "🚀 正在处理核心批次: $CURRENT"
+            
+            # 关闭所有可能的开关，防止脚本多跑
+            for T in "avatar" "Chart" "illustration" "illustrationBlur" "illustrationLowRes" "music"; do
               sed -i -E "s/^$T[[:space:]]*=[[:space:]]*.*/$T = False/I" config.ini
             done
+            
+            # 仅开启当前项
             sed -i -E "s/^$CURRENT[[:space:]]*=[[:space:]]*.*/$CURRENT = True/I" config.ini
             
-            # 运行脚本
-            timeout 1500 python resource.py Phigros.apk || echo "⚠️ $CURRENT 跳过"
-            sleep 2
+            # 运行脚本，设置 15 分钟单项超时
+            timeout 900 python resource.py Phigros.apk || echo "⚠️ $CURRENT 批次超时或失败，跳过"
+            
+            # 强制内存回收
+            python3 -c "import gc; gc.collect()"
+            sleep 5
           done
+          
+          # 恢复配置
           mv config.ini.bak config.ini
 
-      # 8. 发布资源
+      # 7. 检出目标发布仓库
       - name: Checkout Build Repository
         uses: actions/checkout@v4
         with:
@@ -104,18 +105,25 @@ jobs:
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
+      # 8. 同步并推送
       - name: Sync & Push
         working-directory: ./resource
         run: |
-          for folder in avatar chart illustration illustrationBlur illustrationLowRes music; do
+          # 确保输出目录不为空再进行同步
+          for folder in avatar chart illustration music; do
             if [ -d "$folder" ] && [ "$(ls -A $folder)" ]; then
               mkdir -p ../build_repo/$folder
               rsync -av --delete "$folder/" "../build_repo/$folder/"
             fi
           done
+          
           cd ../build_repo
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "Auto Update" || exit 0
-          git push origin master
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto Update Phigros Resources (Lite) - $(date +'%Y-%m-%d %H:%M')"
+            git push origin master
+          else
+            echo "没有检测到资源更新"
+          fi
