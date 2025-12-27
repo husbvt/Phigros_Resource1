@@ -81,12 +81,13 @@ jobs:
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 10. 运行资源提取脚本
+      # 10. 运行资源提取脚本 (修复：传递APK文件路径参数)
       - name: Run resource.py
         working-directory: resource
         run: |
           echo "正在运行 resource.py 脚本..."
-          python resource.py
+          # 关键修复：传递 Phigros.apk 作为命令行参数
+          python resource.py Phigros.apk
           echo "✅ 资源提取完成"
 
       # 11. 检出构建产物仓库
