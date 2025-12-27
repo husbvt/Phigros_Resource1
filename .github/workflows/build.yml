@@ -1,9 +1,7 @@
-name: Build Phigros Resources (Final Fixed)
+name: Build Phigros Resources (Final Fixed V2)
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 * * * *"
 
 jobs:
   build:
@@ -11,11 +9,17 @@ jobs:
     timeout-minutes: 90
 
     steps:
-      # 1. 初始化目录
-      - name: Create Directories
-        run: mkdir -p history resource build_repo
+      # 1. 先检出脚本仓库（必须放在最前面，防止覆盖后面的文件）
+      - name: Checkout Script Repo
+        uses: actions/checkout@v4
+        with:
+          path: resource
 
-      # 2. 下载资源
+      # 2. 创建下载目录
+      - name: Create History Directory
+        run: mkdir -p history
+
+      # 3. 下载资源
       - name: Download Release Assets
         uses: robinraju/release-downloader@v1.10
         with:
@@ -26,37 +30,23 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 安装工具
-      - name: Install System Tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y p7zip-full libogg-dev libvorbis-dev rsync
-
-      # 4. 【修复路径】解压并确保 APK 移入 resource 目录
+      # 4. 解压并将 APK 放入 resource 目录
       - name: Extract & Prepare APK
         run: |
+          sudo apt-get update && sudo apt-get install -y p7zip-full
           shopt -s nullglob
           cd history
-          for f in *.7z.001; do 
-            7z x "$f" -y
-          done
-          # 寻找解压出的 APK
-          APK_PATH=$(find . -name "*.apk" | head -n 1)
-          if [ -z "$APK_PATH" ]; then
-            echo "❌ 未找到 APK 文件"
+          7z x "*.7z.001" -y
+          APK_FILE=$(find . -name "*.apk" | head -n 1)
+          if [ -z "$APK_FILE" ]; then
+            echo "❌ 未找到 APK"
             exit 1
           fi
-          # 核心修正：将其复制到 resource 根目录，并统一命名为 Phigros.apk
-          cp "$APK_PATH" ../resource/Phigros.apk
-          echo "✅ APK 已就绪并移动至: resource/Phigros.apk"
+          # 移动到 resource 根目录
+          mv "$APK_FILE" ../resource/Phigros.apk
+          echo "✅ APK 已移动至: resource/Phigros.apk"
 
-      # 5. 检出脚本
-      - name: Checkout Script Repo
-        uses: actions/checkout@v4
-        with:
-          path: resource
-
-      # 6. 设置描述信息 (info)
+      # 5. 获取 Info 描述文件
       - name: Checkout Info Directory
         uses: actions/checkout@v4
         with:
@@ -65,69 +55,48 @@ jobs:
           path: info_source
 
       - name: Setup Info Directory
-        working-directory: ./resource
         run: |
-          mkdir -p info
-          cp -rn ../info_source/* info/ 2>/dev/null || true
+          mkdir -p resource/info
+          cp -rn info_source/* resource/info/ 2>/dev/null || true
 
-      # 7. Python 环境
+      # 6. 设置 Python 环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 8. 依赖安装
-      - name: Install Python Dependencies
-        working-directory: ./resource
-        run: pip install UnityPy fsb5
-
-      # 9. 清理与创建目录
-      - name: Pre-clean
-        working-directory: ./resource
-        run: |
-          rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
-          mkdir -p avatar chart illustration illustrationBlur illustrationLowRes music
-
-      # 10. 【路径加固】分批修改配置并运行
+      # 7. 安装依赖与运行处理（分批逻辑）
       - name: Batch Extraction
         working-directory: ./resource
         run: |
-          # 再次检查 APK 是否存在，防止脚本报错
+          pip install UnityPy fsb5
+          
+          # 再次强制确认文件存在
           if [ ! -f "Phigros.apk" ]; then
-            echo "❌ 错误：在 $(pwd) 找不到 Phigros.apk"
+            echo "❌ 严重错误：Phigros.apk 丢失！"
+            ls -R ..
             exit 1
           fi
-          
+
           TYPES=("avatar" "Chart" "illustration" "illustrationBlur" "illustrationLowRes" "music")
           cp config.ini config.ini.bak
           
           for CURRENT in "${TYPES[@]}"; do
             echo "------------------------------------------"
-            echo "🚀 批次开始: $CURRENT"
-            
-            # 修改配置（忽略大小写）
+            echo "🚀 正在提取: $CURRENT"
+            # 修改配置
             for T in "${TYPES[@]}"; do
               sed -i -E "s/^$T[[:space:]]*=[[:space:]]*.*/$T = False/I" config.ini
             done
             sed -i -E "s/^$CURRENT[[:space:]]*=[[:space:]]*.*/$CURRENT = True/I" config.ini
             
             # 运行脚本
-            timeout 1500 python resource.py Phigros.apk || echo "⚠️ $CURRENT 批次跳过"
-            
-            python3 -c "import gc; gc.collect()"
+            timeout 1500 python resource.py Phigros.apk || echo "⚠️ $CURRENT 跳过"
             sleep 2
           done
           mv config.ini.bak config.ini
 
-      # 11. 验证
-      - name: Verify Results
-        working-directory: ./resource
-        run: |
-          echo "=== 最终生成统计 ==="
-          ls -R avatar chart illustration music | grep ":$" | sed -e 's/:$//' -e 's/[^-][^\/]*\//--/g' -e 's/^/   /'
-          find avatar chart illustration music -type f | wc -l
-
-      # 12. 发布
+      # 8. 发布资源
       - name: Checkout Build Repository
         uses: actions/checkout@v4
         with:
@@ -145,10 +114,8 @@ jobs:
             fi
           done
           cd ../build_repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions@users.noreply.github.com"
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
           git add .
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto Update [$(date +'%Y-%m-%d %H:%M')]"
-            git push origin master
-          fi
+          git commit -m "Auto Update" || exit 0
+          git push origin master
