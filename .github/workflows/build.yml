@@ -3,7 +3,134 @@ name: Build Phigros Resources
 on:
   workflow_dispatch:
   schedule:
+    - cron: "0 * * * *"name: Build Phigros Resources
+
+on:
+  workflow_dispatch:
+  schedule:
     - cron: "0 * * * *"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. 创建历史目录
+      - name: Create History Directory
+        run: mkdir -p history
+
+      # 2. 从Release下载全部分卷文件
+      - name: Download ALL Release Assets
+        uses: robinraju/release-downloader@v1.10
+        with:
+          repository: "SteveZMTstudios/Phigros-history"
+          latest: true
+          fileName: "*.7z.*"
+          out-file-path: "./history"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 3. 安装解压工具
+      - name: Install p7zip
+        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+
+      # 4. 解压分卷包并提取APK
+      - name: Extract & Prepare APK
+        working-directory: ./history
+        run: |
+          shopt -s nullglob
+          echo "当前目录分卷文件:"
+          ls -la *.7z.001 2>/dev/null || echo "未找到.7z.001文件"
+          for f in *.7z.001; do
+            echo "解压: $f"
+            7z x "$f"
+          done
+          APK=$(find . -name "*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "❌ APK not found"
+            exit 1
+          fi
+          echo "Found APK: $APK"
+          cp "$APK" Phigros.apk
+
+      # 5. 检出资源处理脚本仓库
+      - name: Checkout Phigros_Resource1
+        uses: actions/checkout@v4
+        with:
+          path: resource
+
+      # 6. 更新APK文件
+      - name: Update APK
+        run: cp history/Phigros.apk resource/Phigros.apk
+
+      # 7. 设置Python环境
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      # 8. [新增] 安装Python依赖 (包括UnityPy)
+      - name: Install Python dependencies
+        working-directory: ./resource
+        run: |
+          echo "正在安装Python依赖包..."
+          # 安装resource.py脚本运行所需的库
+          pip install UnityPy
+          # 如果resource.py脚本目录有requirements.txt，也可以一并安装
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          fi
+          echo "依赖安装完成。"
+
+      # 9. 清理旧的输出文件
+      - name: Clean old outputs
+        working-directory: resource
+        run: |
+          rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
+
+      # 10. 运行资源提取脚本
+      - name: Run resource.py
+        working-directory: resource
+        run: |
+          echo "正在运行 resource.py 脚本..."
+          python resource.py
+          echo "✅ 资源提取完成"
+
+      # 11. 检出构建产物仓库
+      - name: Checkout build repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.BUILD_REPO }}
+          token: ${{ secrets.BUILD_PAT }}
+          ref: master
+          path: build
+
+      # 12. 发布资源到构建仓库
+      - name: Publish resources
+        working-directory: ./resource
+        run: |
+          rsync -av --delete \
+            avatar \
+            chart \
+            illustration \
+            illustrationBlur \
+            illustrationLowRes \
+            music \
+            ../build/
+
+      # 13. 提交并推送更改
+      - name: Commit & Push
+        working-directory: ./build
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "auto update"
+            git push origin master
+          fi
 
 jobs:
   build:
