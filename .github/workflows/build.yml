@@ -49,38 +49,45 @@ jobs:
       - name: 6. 自动化分阶段提取
         working-directory: ./resource
         run: |
-          # 强制并发为 1 减少内存消耗
+          # 强制并发为 1
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
 
-          # --- 1. 提取头像 ---
+          # --- 1. 提取头像 (Avatar) ---
+          # 修复点：同时尝试大写开头的开关
           echo "🚀 Processing: avatar"
           sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
           sed -i -E "s/^avatar[[:space:]]*=.*/avatar = True/I" config.ini
           python resource.py Phigros.apk || echo "Skip"
-          if [ -d "avatar" ]; then rsync -av "avatar/" "../build_repo/avatar/"; rm -rf "avatar"/*; fi
+          # 检查多个可能的输出目录名 (avatar 或 Avatar)
+          for d in avatar Avatar; do
+            if [ -d "$d" ] && [ "$(ls -A "$d" 2>/dev/null)" ]; then
+              rsync -av "$d/" "../build_repo/avatar/"
+              rm -rf "$d"/*
+            fi
+          done
 
-          # --- 2. 提取谱面 ---
+          # --- 2. 提取谱面 (Chart) ---
           echo "🚀 Processing: Chart"
           sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
           sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
           python resource.py Phigros.apk || echo "Skip"
           if [ -d "chart" ]; then rsync -av "chart/" "../build_repo/chart/"; rm -rf "chart"/*; fi
 
-          # --- 3. 提取音乐 ---
+          # --- 3. 提取音乐 (music) ---
           echo "🚀 Processing: music"
           sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
           sed -i -E "s/^music[[:space:]]*=.*/music = True/I" config.ini
           python resource.py Phigros.apk || echo "Skip"
           if [ -d "music" ]; then rsync -av "music/" "../build_repo/music/"; rm -rf "music"/*; fi
 
-          # --- 4. 提取曲绘 ---
+          # --- 4. 提取曲绘 (illustration) ---
           echo "🚀 Processing: illustration"
           sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
           sed -i -E "s/^illustration[[:space:]]*=.*/illustration = True/I" config.ini
           python resource.py Phigros.apk || echo "Skip"
           if [ -d "illustration" ]; then rsync -av "illustration/" "../build_repo/illustration/"; rm -rf "illustration"/*; fi
 
-      - name: 7. 最终推送至 husbvt 仓库
+      - name: 7. 最终推送至 husbvt 仓库 master 分支
         working-directory: ./build_repo
         env:
           AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
@@ -90,12 +97,13 @@ jobs:
           git config --global core.quotepath false
 
           echo "📊 Final Size Check:"
-          du -sh ./* || echo "No files"
+          du -sh ./*
 
-          git add .
+          git add -A
           if ! git diff --cached --quiet; then
             git commit -m "Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
-            git push "https://${AUTH_TOKEN}@github.com/husbvt/Phigros_Resource_Build.git" master --force
+            # 明确推送到 master 分支
+            git push "https://${AUTH_TOKEN}@github.com/husbvt/Phigros_Resource_Build.git" HEAD:master --force
           else
             echo "✅ No changes to push."
           fi
