@@ -6,7 +6,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 180 # 给曲绘预留更多时间
+    timeout-minutes: 180
 
     steps:
       - name: 1. 检出脚本仓库
@@ -32,7 +32,7 @@ jobs:
           
           echo "🔎 正在定位 APK..."
           FOUND_APK=$(find . -name "*.apk" -type f | head -n 1)
-          if [ -z "$FOUND_APK" ]; then exit 1; fi
+          if [ -z "$FOUND_APK" ]; then echo "❌ APK 找不到"; exit 1; fi
           mkdir -p ./resource
           cp "$FOUND_APK" ./resource/Phigros.apk
 
@@ -48,10 +48,10 @@ jobs:
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 6. 自动化分批提取与即时本地合并
+      - name: 6. 自动化分批提取与即时合并
         working-directory: ./resource
         run: |
-          # 核心修复：1线程 + 内存清理
+          # 核心修复：1线程减少内存压力
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
 
           run_batch() {
@@ -59,7 +59,7 @@ jobs:
             echo "------------------------------------------"
             echo "🚀 正在提取批次: $task"
             
-            # 重置配置：仅开启当前任务
+            # 自动化配置
             sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
             if [ "$task" == "Chart" ]; then
               sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
@@ -67,44 +67,20 @@ jobs:
               sed -i -E "s/^$task[[:space:]]*=.*/$task = True/I" config.ini
             fi
             
-            # 执行提取
+            # 执行 Python 提取
             python resource.py Phigros.apk || echo "⚠️ $task 部分失败"
             
-            # 【关键修复】每跑完一个批次，立刻将其合并到 build_repo 缓冲区
-            # 这样即便后续任务崩溃，前面的任务成果也已经保存在 build_repo 目录下
+            # 即时同步到 build_repo 并清理空间
             for f in avatar chart illustration music; do
-              if [ -d "$f" ] && [ "$(ls -A $f 2>/dev/null)" ]; then
-                echo "📦 正在暂存 $f 提取成果..."
+              if [ -d "$f" ] && [ "$(ls -A "$f" 2>/dev/null)" ]; then
+                echo "📦 暂存 $f 结果..."
                 mkdir -p "../build_repo/$f"
                 rsync -av "$f/" "../build_repo/$f/"
-                # 清空已同步的本地临时目录以节省空间
-                rm -rf "$f"/* fi
+                rm -rf "${f:?}"/*
+              fi
             done
           }
 
           run_batch "avatar"
           run_batch "Chart"
-          run_batch "music"
-          run_batch "illustration"
-
-      - name: 7. 最终推送至 husbvt 仓库
-        working-directory: ./build_repo
-        env:
-          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global core.quotepath false
-
-          # 检查文件完整性统计
-          echo "📊 最终提取统计："
-          du -sh *
-
-          git add .
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
-            # 强制推送至目标仓库
-            git push "https://${AUTH_TOKEN}@github.com/husbvt/Phigros_Resource_Build.git" master --force
-          else
-            echo "✨ 资源无变化。"
-          fi
+          run_
