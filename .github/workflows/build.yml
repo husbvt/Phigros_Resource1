@@ -1,4 +1,4 @@
-name: Build Phigros Resources (最终修复版)
+name: Build Phigros Resources (简化修复版)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 90
 
     steps:
       # 1. 创建历史目录
@@ -32,19 +32,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y p7zip-full wget
 
-      # 4. 安装正确的音频编解码器库
+      # 4. 安装音频编解码器库
       - name: Install Audio Codec Libraries
         run: |
-          echo "=== 修复音频库依赖 ==="
           sudo apt-get update
           sudo apt-get install -y \
             libogg-dev \
             libvorbis-dev \
             libvorbis0a \
             libvorbisenc2 \
-            libvorbisfile3 \
-            libvorbisidec1
-          echo "✅ 音频库安装完成"
+            libvorbisfile3
 
       # 5. 解压并准备APK
       - name: Extract & Prepare APK
@@ -80,12 +77,9 @@ jobs:
       - name: Setup Info Directory
         working-directory: ./resource
         run: |
-          echo "=== 设置 info 目录 ==="
           mkdir -p info
           cp -rn ../info_source/* info/ 2>/dev/null || true
-          echo "关键文件状态:"
           [ -f "info/tmp.tsv" ] && echo "✅ tmp.tsv 存在" || echo "❌ tmp.tsv 缺失（将跳过avatar处理）"
-          [ -f "info/difficulty.tsv" ] && echo "✅ difficulty.tsv 存在" || echo "❌ difficulty.tsv 缺失"
 
       # 8. 更新APK
       - name: Update APK
@@ -101,48 +95,42 @@ jobs:
       - name: Install Python Dependencies
         working-directory: ./resource
         run: |
-          echo "=== 安装Python依赖 ==="
           pip uninstall -y fsb5 UnityPy 2>/dev/null || true
           pip install UnityPy
           pip install "git+https://github.com/HearthSim/python-fsb5.git"
-          echo "✅ 依赖安装完成"
 
       # 11. 清理旧输出
       - name: Clean Old Outputs
         working-directory: resource
         run: |
-          # 仅清理需要的目录
           rm -rf avatar chart illustration music
 
-      # 12. 核心分批处理（带智能监控和修复）
-      - name: Run Resource Extraction (智能监控版)
+      # 12. 核心分批处理（简化版）
+      - name: Run Resource Extraction (简化版)
         working-directory: ./resource
         run: |
           echo "开始核心资源分批处理..."
-          echo "总开始时间: $(date)"
           
           # 核心处理类型
           CORE_TYPES=("illustration" "Chart" "music")
           [ -f "info/tmp.tsv" ] && CORE_TYPES=("avatar" "${CORE_TYPES[@]}")
           
-          echo "将处理核心类型: ${CORE_TYPES[*]}"
+          echo "将处理类型: ${CORE_TYPES[*]}"
           
-          # 备份原始配置
+          # 备份配置
           [ -f "config.ini" ] && cp config.ini config.ini.backup
           
           SUCCESS_TYPES=""
           FAILED_TYPES=""
-          SKIPPED_TYPES=""
           
           for CURRENT_TYPE in "${CORE_TYPES[@]}"; do
             echo ""
             echo "======= 处理类型: $CURRENT_TYPE ======="
             echo "开始时间: $(date)"
             
-            # 跳过条件检查
+            # 跳过条件
             if [ "$CURRENT_TYPE" = "avatar" ] && [ ! -f "info/tmp.tsv" ]; then
               echo "⚠️ 跳过avatar（缺少tmp.tsv）"
-              SKIPPED_TYPES="$SKIPPED_TYPES avatar"
               continue
             fi
             
@@ -150,196 +138,73 @@ jobs:
             sed -i "s/^\(avatar\|Chart\|illustration\|music\) = .*$/\\1 = False/" config.ini 2>/dev/null
             sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini 2>/dev/null
             
-            echo "配置状态:"
-            grep -E "^(avatar|Chart|illustration|music)" config.ini 2>/dev/null || echo "使用默认配置"
-            
-            # === 特殊处理Chart类型 ===
+            # === 特殊处理Chart类型：添加跳过问题文件的补丁 ===
             if [ "$CURRENT_TYPE" = "Chart" ]; then
-              echo "📊 Chart特殊处理模式启动"
+              echo "📊 Chart特殊处理：跳过问题文件"
               
-              # 1. 预扫描APK，了解Chart文件数量
-              echo "🔍 预扫描APK中的Chart文件..."
+              # 创建临时修复的resource.py
               python3 << 'EOF'
-          import UnityPy
-          import os
+          import re
           
-          print("正在预扫描APK...")
-          try:
-              env = UnityPy.load('Phigros.apk')
-              chart_files = []
-              other_files = []
-              
-              for obj in env.objects:
-                  if obj.type.name == "TextAsset" and "Chart" in obj.path:
-                      chart_files.append(obj.path)
-                  elif obj.type.name == "TextAsset":
-                      other_files.append(obj.path)
-              
-              print(f"📈 扫描完成:")
-              print(f"  - 找到 {len(chart_files)} 个Chart文件")
-              print(f"  - 找到 {len(other_files)} 个其他TextAsset文件")
-              
-              # 列出前10个Chart文件
-              print("\n📋 前10个Chart文件:")
-              for i, path in enumerate(chart_files[:10]):
-                  print(f"  {i+1}. {path}")
-              
-              # 检查是否有可疑文件
-              suspicious = ["TEmoji", "emoji", "Emoji", "Tutorial", "Test", "Debug"]
-              for path in chart_files:
-                  if any(s in path for s in suspicious):
-                      print(f"⚠️  发现可疑Chart文件: {path}")
-              
-          except Exception as e:
-              print(f"预扫描失败: {e}")
+          with open('resource.py', 'r', encoding='utf-8') as f:
+              content = f.read()
+          
+          # 添加跳过逻辑到Chart处理部分
+          skip_pattern = r'(for obj in env\.objects:(?:\n.*)*?if obj\.type\.name == "TextAsset".*Chart.*)'
+          
+          def add_skip_logic(match):
+              original = match.group(1)
+              enhanced = '''for obj in env.objects:
+        if obj.type.name == "TextAsset" and "Chart" in obj.path:
+            # 跳过可能卡住的文件
+            skip_files = ["TEmoji", "emoji", "Emoji", "Tutorial", "Debug", "Test"]
+            if any(skip_file in obj.path for skip_file in skip_files):
+                print(f"跳过可疑文件: {obj.path}")
+                continue
+'''
+              return enhanced
+          
+          new_content = re.sub(skip_pattern, add_skip_logic, content, flags=re.DOTALL)
+          
+          with open('resource.py', 'w', encoding='utf-8') as f:
+              f.write(new_content)
+          
+          print("✅ 已添加Chart文件跳过逻辑")
           EOF
-              
-              # 2. 创建监控脚本
-              cat > monitor_chart.sh << 'EOF'
-          #!/bin/bash
-          echo "🎯 Chart处理监控器启动"
-          echo "监控进程PID: $$"
-          
-          # 设置最长运行时间：20分钟
-          MAX_TIME=1200
-          START_TIME=$(date +%s)
-          
-          # 监控输出目录增长
-          LAST_COUNT=0
-          STUCK_COUNT=0
-          MAX_STUCK=3  # 连续3次无增长视为卡住
-          
-          while true; do
-              # 检查是否超时
-              CURRENT_TIME=$(date +%s)
-              ELAPSED=$((CURRENT_TIME - START_TIME))
-              
-              if [ $ELAPSED -gt $MAX_TIME ]; then
-                  echo "⏰ 监控超时（超过 ${MAX_TIME}秒）"
-                  return 1
-              fi
-              
-              # 检查主进程是否还在运行
-              if ! ps -p $1 > /dev/null 2>&1; then
-                  echo "✅ 主进程已结束"
-                  return 0
-              fi
-              
-              # 监控输出文件数量
-              if [ -d "chart" ]; then
-                  CURRENT_COUNT=$(find chart -type f 2>/dev/null | wc -l)
-                  echo "📊 进度: $CURRENT_COUNT 个文件（已运行 ${ELAPSED}秒）"
-                  
-                  # 检查是否卡住
-                  if [ $CURRENT_COUNT -eq $LAST_COUNT ]; then
-                      STUCK_COUNT=$((STUCK_COUNT + 1))
-                      echo "⚠️  文件数量未增长 ($STUCK_COUNT/$MAX_STUCK)"
-                      
-                      if [ $STUCK_COUNT -ge $MAX_STUCK ]; then
-                          echo "🚨 检测到卡住！可能遇到问题文件"
-                          echo "将尝试跳过当前文件并继续..."
-                          
-                          # 向进程发送CONT信号（尝试恢复）
-                          kill -CONT $1 2>/dev/null
-                          sleep 5
-                          
-                          # 如果仍然卡住，发送USR1信号（自定义信号）
-                          kill -USR1 $1 2>/dev/null
-                          sleep 10
-                      fi
-                  else
-                      STUCK_COUNT=0
-                      LAST_COUNT=$CURRENT_COUNT
-                  fi
-              else
-                  echo "📁 chart目录尚未创建"
-              fi
-              
-              sleep 30  # 每30秒检查一次
-          done
-          EOF
-              
-              chmod +x monitor_chart.sh
-              
-              # 3. 运行Chart提取（带监控）
-              echo "启动Chart提取进程（带监控）..."
-              LOG_FILE="chart_extraction_$(date +%s).log"
-              
-              # 后台运行主进程
-              timeout 1800 python resource.py Phigros.apk > "$LOG_FILE" 2>&1 &
-              MAIN_PID=$!
-              
-              # 后台运行监控器
-              ./monitor_chart.sh $MAIN_PID &
-              MONITOR_PID=$!
-              
-              # 等待主进程结束
-              wait $MAIN_PID
-              MAIN_EXIT=$?
-              
-              # 停止监控器
-              kill $MONITOR_PID 2>/dev/null
-              
-              # 分析结果
-              echo "=== Chart处理结果 ==="
-              tail -50 "$LOG_FILE"
-              
-              if [ $MAIN_EXIT -eq 0 ]; then
-                  echo "✅ Chart处理成功完成"
-                  SUCCESS_TYPES="$SUCCESS_TYPES Chart"
-              elif [ $MAIN_EXIT -eq 124 ] || [ $MAIN_EXIT -eq 137 ]; then
-                  echo "❌ Chart处理超时"
-                  
-                  # 尝试抢救已有文件
-                  if [ -d "chart" ] && [ -n "$(ls -A chart 2>/dev/null)" ]; then
-                      COUNT=$(find chart -type f | wc -l)
-                      echo "⚠️  但成功提取了 $COUNT 个Chart文件，部分成功"
-                      SUCCESS_TYPES="$SUCCESS_TYPES Chart(部分)"
-                  else
-                      FAILED_TYPES="$FAILED_TYPES Chart(超时)"
-                  fi
-              else
-                  echo "❌ Chart处理失败（代码: $MAIN_EXIT）"
-                  
-                  # 检查是否有部分输出
-                  if [ -d "chart" ] && [ -n "$(ls -A chart 2>/dev/null)" ]; then
-                      COUNT=$(find chart -type f | wc -l)
-                      echo "⚠️  部分成功: 提取了 $COUNT 个Chart文件"
-                      SUCCESS_TYPES="$SUCCESS_TYPES Chart(部分)"
-                  else
-                      FAILED_TYPES="$FAILED_TYPES Chart(失败)"
-                  fi
-              fi
-              
-              # 清理监控脚本
-              rm -f monitor_chart.sh "$LOG_FILE"
-              
-            else
-              # 其他类型的标准处理
-              echo "启动提取进程（超时:900秒）..."
-              timeout 900 python resource.py Phigros.apk 2>&1 | tail -50
-              
-              EXIT_CODE=${PIPESTATUS[0]}
-              
-              if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
-                  echo "❌ $CURRENT_TYPE 超时或被终止"
-                  FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
-              elif [ $EXIT_CODE -eq 0 ]; then
-                  echo "✅ $CURRENT_TYPE 成功"
-                  SUCCESS_TYPES="$SUCCESS_TYPES $CURRENT_TYPE"
-              else
-                  echo "❌ $CURRENT_TYPE 失败（代码:$EXIT_CODE）"
-                  FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
-              fi
             fi
             
-            # 清理和恢复
-            python3 -c "import gc; gc.collect()"
-            sleep 3
+            # 运行提取
+            echo "启动提取进程..."
+            timeout 1200 python resource.py Phigros.apk 2>&1 | tail -100
             
-            # 检查内存使用
-            echo "内存状态:"
-            free -h
+            EXIT_CODE=${PIPESTATUS[0]}
+            
+            # 恢复原版resource.py（如果是Chart）
+            if [ "$CURRENT_TYPE" = "Chart" ] && [ -f "resource.py.backup" ]; then
+              cp resource.py.backup resource.py
+              echo "✅ 恢复原版resource.py"
+            fi
+            
+            if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
+              echo "❌ $CURRENT_TYPE 超时"
+              FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
+            elif [ $EXIT_CODE -eq 0 ]; then
+              echo "✅ $CURRENT_TYPE 成功"
+              SUCCESS_TYPES="$SUCCESS_TYPES $CURRENT_TYPE"
+              
+              # 检查输出
+              if [ -d "$CURRENT_TYPE" ]; then
+                COUNT=$(find "$CURRENT_TYPE" -type f 2>/dev/null | wc -l)
+                echo "📊 生成 $COUNT 个文件"
+              fi
+            else
+              echo "❌ $CURRENT_TYPE 失败（代码:$EXIT_CODE）"
+              FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
+            fi
+            
+            # 清理内存
+            python3 -c "import gc; gc.collect()"
+            sleep 2
             
             echo "结束时间: $(date)"
           done
@@ -347,31 +212,24 @@ jobs:
           # 恢复配置
           [ -f "config.ini.backup" ] && mv config.ini.backup config.ini
           
+          # 备份resource.py（如果需要）
+          if [ ! -f "resource.py.backup" ]; then
+            cp resource.py resource.py.backup
+          fi
+          
           # 最终报告
           echo ""
           echo "======= 处理完成 ======="
           echo "✅ 成功: $SUCCESS_TYPES"
-          [ -n "$SKIPPED_TYPES" ] && echo "➡️  跳过: $SKIPPED_TYPES"
           [ -n "$FAILED_TYPES" ] && echo "❌ 失败: $FAILED_TYPES"
-          echo "总时间: $(date)"
+          echo "总结束时间: $(date)"
           
-          # 统计最终文件数量
-          echo ""
-          echo "📊 最终文件统计:"
-          for dir in avatar chart illustration music; do
-              if [ -d "$dir" ] && [ -n "$(ls -A $dir 2>/dev/null)" ]; then
-                  COUNT=$(find "$dir" -type f 2>/dev/null | wc -l)
-                  SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
-                  echo "  $dir: $COUNT 文件 ($SIZE)"
-              else
-                  echo "  $dir: 无文件"
-              fi
-          done
-          
-          # 如果所有类型都失败，则工作流失败
-          if [ -z "$SUCCESS_TYPES" ] && [ -n "$FAILED_TYPES" ]; then
-              echo "❌ 所有核心类型处理均失败"
-              exit 1
+          # 如果Chart失败但其他成功，继续
+          if [[ "$FAILED_TYPES" == *"Chart"* ]] && [[ "$SUCCESS_TYPES" == *"illustration"* ]]; then
+            echo "⚠️  Chart处理失败，但其他成功，继续工作流"
+          elif [ -z "$SUCCESS_TYPES" ]; then
+            echo "❌ 所有类型都失败"
+            exit 1
           fi
 
       # 13. 验证生成资源
@@ -391,16 +249,6 @@ jobs:
             fi
           done
           echo "总计: $TOTAL_COUNT 个资源文件"
-          
-          # 确认不需要的目录确实不存在
-          echo "已跳过的目录状态:"
-          for dir in illustrationBlur illustrationLowRes; do
-            if [ -d "$dir" ]; then
-              echo "⚠️  $dir: 目录存在（但不需要）"
-            else
-              echo "➖ $dir: 目录不存在（符合预期）"
-            fi
-          done
 
       # 14. 检出发布仓库
       - name: Checkout Build Repository
@@ -411,11 +259,11 @@ jobs:
           ref: master
           path: build
 
-      # 15. 发布资源（仅发布需要的类型）
+      # 15. 发布资源
       - name: Publish Resources
         working-directory: ./resource
         run: |
-          echo "正在发布核心资源..."
+          echo "正在发布资源..."
           for dir in avatar chart illustration music; do
             if [ -d "$dir" ] && [ -n "$(ls -A $dir 2>/dev/null)" ]; then
               echo "发布 $dir..."
@@ -423,20 +271,19 @@ jobs:
               rsync -av --delete "$dir/" "../build/$dir/"
             fi
           done
-          echo "✅ 核心资源发布完成"
+          echo "✅ 资源发布完成"
 
       # 16. 提交更改
       - name: Commit Changes
         working-directory: ./build
         run: |
-          echo "提交更改..."
           git config user.name "github-actions"
           git config user.email "actions@github.com"
           git add .
           if git diff --cached --quiet; then
             echo "没有变更需要提交"
           else
-            git commit -m "自动更新核心资源 [$(date +'%Y-%m-%d %H:%M')]"
+            git commit -m "自动更新资源 [$(date +'%Y-%m-%d %H:%M')]"
             git push origin master
             echo "✅ 变更已提交"
           fi
@@ -449,6 +296,3 @@ jobs:
           echo "运行器: $(uname -a)"
           echo "磁盘状态:"
           df -h | grep -E "Filesystem|/dev/root"
-          echo "内存状态:"
-          free -h
-          echo "工作流状态: ${{ job.status }}"
