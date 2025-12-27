@@ -46,7 +46,7 @@ jobs:
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 6. 自动化分阶段提取 (平铺逻辑)
+      - name: 6. 自动化分阶段提取
         working-directory: ./resource
         run: |
           # 强制并发为 1 减少内存消耗
@@ -86,4 +86,16 @@ jobs:
           AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
         run: |
           git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.nore
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global core.quotepath false
+
+          echo "📊 Final Size Check:"
+          du -sh ./* || echo "No files"
+
+          git add .
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
+            git push "https://${AUTH_TOKEN}@github.com/husbvt/Phigros_Resource_Build.git" master --force
+          else
+            echo "✅ No changes to push."
+          fi
