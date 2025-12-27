@@ -1,4 +1,4 @@
-name: Build Phigros Resources (修复Chart卡住问题)
+name: Build Phigros Resources (Chart修复最终版)
 
 on:
   workflow_dispatch:
@@ -105,57 +105,128 @@ jobs:
         run: |
           rm -rf avatar chart illustration music
 
-      # 12. 应用Chart修复补丁
-      - name: Apply Chart Fix Patch
+      # 12. 创建Chart专用处理脚本（避免修改resource.py）
+      - name: Create Chart Processor
         working-directory: ./resource
         run: |
-          echo "应用Chart修复补丁..."
-          # 备份原文件
-          cp resource.py resource.py.backup
+          echo "创建Chart专用处理脚本..."
           
-          # 使用更简单的方法修改文件
-          python3 << "EOF"
-import re
+          cat > extract_chart.py << 'EOF'
+#!/usr/bin/env python3
+"""
+Chart专用提取脚本
+跳过TEmoji等可能导致卡住的文件
+"""
+import UnityPy
+import os
+import json
 
-with open('resource.py', 'r', encoding='utf-8') as f:
-    content = f.read()
+def extract_chart():
+    print("=== Chart专用提取开始 ===")
+    
+    apk_path = 'Phigros.apk'
+    if not os.path.exists(apk_path):
+        print(f"错误: APK文件不存在: {apk_path}")
+        return False
+    
+    output_dir = 'chart'
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 跳过列表
+    skip_files = [
+        "TEmoji",
+        "emoji", 
+        "Emoji",
+        "Tutorial",
+        "Debug",
+        "Test",
+        "Editor",
+        "Default"
+    ]
+    
+    try:
+        env = UnityPy.load(apk_path)
+        chart_count = 0
+        skip_count = 0
+        error_count = 0
+        
+        print(f"加载APK成功，总共 {len(list(env.objects))} 个对象")
+        
+        for obj in env.objects:
+            try:
+                if obj.type.name == "TextAsset" and "Chart" in obj.path:
+                    path = obj.path
+                    
+                    # 检查是否需要跳过
+                    should_skip = False
+                    for skip_word in skip_files:
+                        if skip_word.lower() in path.lower():
+                            print(f"跳过: {path}")
+                            skip_count += 1
+                            should_skip = True
+                            break
+                    
+                    if should_skip:
+                        continue
+                    
+                    # 提取Chart
+                    data = obj.read()
+                    if hasattr(data, 'script'):
+                        text = data.script.decode('utf-8', errors='ignore')
+                        
+                        # 保存文件
+                        filename = os.path.basename(path).replace('/', '_').replace('\\', '_')
+                        if not filename.endswith('.txt'):
+                            filename += '.txt'
+                        
+                        output_path = os.path.join(output_dir, filename)
+                        
+                        with open(output_path, 'w', encoding='utf-8') as f:
+                            f.write(text)
+                        
+                        chart_count += 1
+                        
+                        # 每10个文件报告一次进度
+                        if chart_count % 10 == 0:
+                            print(f"已提取 {chart_count} 个Chart文件")
+                    
+            except Exception as e:
+                print(f"处理文件时出错 {obj.path}: {e}")
+                error_count += 1
+                continue
+        
+        print(f"\n=== Chart提取完成 ===")
+        print(f"✅ 成功提取: {chart_count} 个文件")
+        print(f"➡️  跳过: {skip_count} 个文件")
+        print(f"❌ 错误: {error_count} 个文件")
+        
+        return chart_count > 0
+        
+    except Exception as e:
+        print(f"加载APK失败: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
-print("正在查找Chart处理代码...")
-
-# 方法1：查找包含Chart的处理代码
-if '"Chart" in obj.path' in content and 'if obj.type.name == "TextAsset"' in content:
-    print("找到Chart处理行")
-    
-    # 使用正则表达式添加跳过逻辑
-    pattern = r'(if obj\.type\.name == "TextAsset".*?"Chart" in obj\.path.*?:)'
-    
-    def add_skip_logic(match):
-        original = match.group(1)
-        return original + '\n            # 跳过可能卡住的文件\n            skip_files = ["TEmoji", "emoji", "Emoji", "Tutorial", "Debug", "Test"]\n            if any(skip_file in obj.path for skip_file in skip_files):\n                print(f"跳过可疑文件: {obj.path}")\n                continue'
-    
-    new_content = re.sub(pattern, add_skip_logic, content, flags=re.DOTALL)
-    
-    if new_content != content:
-        with open('resource.py', 'w', encoding='utf-8') as f:
-            f.write(new_content)
-        print("✅ Chart修复补丁已应用")
-    else:
-        print("❌ 无法应用补丁，保持原文件")
-else:
-    print("❌ 未找到Chart处理代码，检查resource.py结构")
+if __name__ == "__main__":
+    success = extract_chart()
+    exit(0 if success else 1)
 EOF
+          
+          chmod +x extract_chart.py
+          echo "✅ Chart专用脚本创建完成"
 
-      # 13. 核心分批处理
+      # 13. 核心分批处理（使用专用脚本处理Chart）
       - name: Run Resource Extraction
         working-directory: ./resource
         run: |
           echo "开始核心资源分批处理..."
           
-          # 核心处理类型
-          CORE_TYPES=("illustration" "Chart" "music")
+          # 处理顺序：先处理其他类型，最后处理Chart
+          CORE_TYPES=("illustration" "music")
           [ -f "info/tmp.tsv" ] && CORE_TYPES=("avatar" "${CORE_TYPES[@]}")
           
-          echo "将处理类型: ${CORE_TYPES[*]}"
+          echo "第一阶段处理: ${CORE_TYPES[*]}"
           
           # 备份配置
           [ -f "config.ini" ] && cp config.ini config.ini.backup
@@ -163,12 +234,12 @@ EOF
           SUCCESS_TYPES=""
           FAILED_TYPES=""
           
+          # 第一阶段：处理除Chart外的所有类型
           for CURRENT_TYPE in "${CORE_TYPES[@]}"; do
             echo ""
             echo "======= 处理类型: $CURRENT_TYPE ======="
             echo "开始时间: $(date)"
             
-            # 跳过条件
             if [ "$CURRENT_TYPE" = "avatar" ] && [ ! -f "info/tmp.tsv" ]; then
               echo "⚠️ 跳过avatar（缺少tmp.tsv）"
               continue
@@ -178,15 +249,8 @@ EOF
             sed -i "s/^\(avatar\|Chart\|illustration\|music\) = .*$/\\1 = False/" config.ini 2>/dev/null
             sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini 2>/dev/null
             
-            # 运行提取
             echo "启动提取进程..."
-            
-            if [ "$CURRENT_TYPE" = "Chart" ]; then
-              echo "📊 Chart处理（已应用跳过补丁）"
-              timeout 1800 python resource.py Phigros.apk 2>&1 | tail -150
-            else
-              timeout 900 python resource.py Phigros.apk 2>&1 | tail -50
-            fi
+            timeout 900 python resource.py Phigros.apk 2>&1 | tail -50
             
             EXIT_CODE=${PIPESTATUS[0]}
             
@@ -196,32 +260,47 @@ EOF
             elif [ $EXIT_CODE -eq 0 ]; then
               echo "✅ $CURRENT_TYPE 成功"
               SUCCESS_TYPES="$SUCCESS_TYPES $CURRENT_TYPE"
-              
-              # 检查输出
-              if [ -d "$CURRENT_TYPE" ]; then
-                COUNT=$(find "$CURRENT_TYPE" -type f 2>/dev/null | wc -l)
-                echo "📊 生成 $COUNT 个文件"
-              fi
             else
               echo "❌ $CURRENT_TYPE 失败（代码:$EXIT_CODE）"
               FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
             fi
             
-            # 清理内存
             python3 -c "import gc; gc.collect()"
             sleep 2
-            
             echo "结束时间: $(date)"
           done
+          
+          # 第二阶段：使用专用脚本处理Chart
+          echo ""
+          echo "======= 处理类型: Chart ======="
+          echo "开始时间: $(date)"
+          echo "使用专用脚本处理Chart..."
+          
+          timeout 1800 python extract_chart.py 2>&1
+          EXIT_CODE=$?
+          
+          if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
+            echo "❌ Chart 超时"
+            FAILED_TYPES="$FAILED_TYPES Chart"
+          elif [ $EXIT_CODE -eq 0 ]; then
+            echo "✅ Chart 成功"
+            SUCCESS_TYPES="$SUCCESS_TYPES Chart"
+            
+            # 检查提取的文件数量
+            if [ -d "chart" ]; then
+              COUNT=$(find chart -name "*.txt" 2>/dev/null | wc -l)
+              echo "📊 生成 $COUNT 个Chart文件"
+            fi
+          else
+            echo "❌ Chart 失败（代码:$EXIT_CODE）"
+            FAILED_TYPES="$FAILED_TYPES Chart"
+          fi
           
           # 恢复配置
           [ -f "config.ini.backup" ] && mv config.ini.backup config.ini
           
-          # 恢复原版resource.py
-          if [ -f "resource.py.backup" ]; then
-            cp resource.py.backup resource.py
-            echo "✅ 恢复原版resource.py"
-          fi
+          # 清理专用脚本
+          rm -f extract_chart.py 2>/dev/null || true
           
           # 最终报告
           echo ""
@@ -230,11 +309,11 @@ EOF
           [ -n "$FAILED_TYPES" ] && echo "❌ 失败: $FAILED_TYPES"
           echo "总结束时间: $(date)"
           
-          # 如果Chart失败但其他成功，继续
-          if [[ "$FAILED_TYPES" == *"Chart"* ]] && [[ "$SUCCESS_TYPES" == *"illustration"* ]]; then
-            echo "⚠️  Chart处理失败，但其他成功，继续工作流"
-          elif [ -z "$SUCCESS_TYPES" ]; then
-            echo "❌ 所有类型都失败"
+          # 判断是否继续
+          if [[ "$SUCCESS_TYPES" == *"illustration"* ]] || [[ "$SUCCESS_TYPES" == *"music"* ]]; then
+            echo "✅ 有成功提取的类型，继续工作流"
+          else
+            echo "❌ 没有成功提取任何类型，工作流失败"
             exit 1
           fi
 
@@ -255,6 +334,12 @@ EOF
             fi
           done
           echo "总计: $TOTAL_COUNT 个资源文件"
+          
+          # 特别检查Chart文件
+          if [ -d "chart" ]; then
+            TXT_COUNT=$(find chart -name "*.txt" 2>/dev/null | wc -l)
+            echo "📊 Chart文件详情: $TXT_COUNT 个.txt文件"
+          fi
 
       # 15. 检出发布仓库
       - name: Checkout Build Repository
