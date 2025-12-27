@@ -1,4 +1,4 @@
-name: Build Phigros Resources
+name: Build Phigros Resources (修改配置分批)
 
 on:
   workflow_dispatch:
@@ -7,15 +7,14 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04-large
-    timeout-minutes: 100  # 设置总超时时间
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
 
     steps:
-      # 1. 创建历史目录
+      # 步骤 1-9：准备阶段 (与之前完全相同)
       - name: Create History Directory
         run: mkdir -p history
 
-      # 2. 从Release下载全部分卷文件
       - name: Download ALL Release Assets
         uses: robinraju/release-downloader@v1.10
         with:
@@ -26,153 +25,101 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 安装解压工具
       - name: Install p7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
-      # 4. 安装音频编解码器库
-      - name: Install audio codec libraries
-        run: |
-          echo "安装音频编解码器库..."
-          sudo apt-get update
-          sudo apt-get install -y \
-            libvorbis-dev \
-            libvorbis0a \
-            libvorbisenc2 \
-            libvorbisfile3 \
-            ffmpeg \
-            libavcodec-dev
-          echo "音频库安装完成"
-
-      # 5. 解压分卷包并提取APK
       - name: Extract & Prepare APK
         working-directory: ./history
         run: |
           shopt -s nullglob
-          echo "当前目录分卷文件:"
-          ls -la *.7z.001 2>/dev/null || echo "未找到.7z.001文件"
-          for f in *.7z.001; do
-            echo "解压: $f"
-            7z x "$f"
-          done
+          for f in *.7z.001; do 7z x "$f"; done
           APK=$(find . -name "*.apk" | head -n 1)
-          if [ -z "$APK" ]; then
-            echo "❌ APK not found"
-            exit 1
-          fi
-          echo "Found APK: $APK"
           cp "$APK" Phigros.apk
-          # 解压完成后立即清理分卷文件以释放空间
-          rm -f *.7z.* 2>/dev/null || true
-          echo "已清理分卷文件释放空间"
+          rm -f *.7z.*
 
-      # 6. 检出资源处理脚本仓库
       - name: Checkout Phigros_Resource1
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # 7. 更新APK文件
       - name: Update APK
         run: cp history/Phigros.apk resource/Phigros.apk
 
-      # 8. 设置Python环境
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 9. 安装Python依赖
       - name: Install Python dependencies
         working-directory: ./resource
-        run: |
-          echo "正在安装Python依赖包..."
-          pip install UnityPy fsb5
-          if [ -f "requirements.txt" ]; then
-            pip install -r requirements.txt
-          fi
-          echo "依赖安装完成。"
+        run: pip install UnityPy fsb5
 
-      # 10. 清理旧的输出文件
       - name: Clean old outputs
         working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 11. 增加系统内存和交换空间
-      - name: Increase system resources
-        run: |
-          echo "=== 增加系统资源 ==="
-          sudo fallocate -l 4G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          sudo sysctl -w vm.swappiness=60
-          sudo sysctl -w vm.vfs_cache_pressure=50
-          echo "✅ 系统资源已优化"
-
-      # 12. 关键：清理磁盘空间
-      - name: Clean up disk space
-        run: |
-          echo "=== 清理磁盘空间 ==="
-          echo "清理前磁盘使用:"
-          df -h
-          
-          # 清理系统缓存和不需要的大文件
-          sudo apt-get clean
-          sudo rm -rf /var/lib/apt/lists/*
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /imagegeneration
-          
-          # 清理各种缓存
-          sudo rm -rf /tmp/*
-          rm -rf ~/.cache/pip
-          
-          echo "清理后磁盘使用:"
-          df -h
-          echo "✅ 磁盘清理完成"
-
-      # 13. 运行资源提取脚本
-      - name: Run resource.py
-        working-directory: resource
-        run: |
-          echo "正在运行 resource.py 脚本..."
-          echo "开始时间: $(date)"
-          echo "当前磁盘空间:"
-          df -h .
-          
-          # 运行脚本前再次确认APK文件存在
-          if [ ! -f "Phigros.apk" ]; then
-            echo "❌ 错误：Phigros.apk 不存在"
-            exit 1
-          fi
-          
-          echo "APK文件大小: $(ls -lh Phigros.apk | awk '{print $5}')"
-          
-          # 运行脚本
-          python resource.py Phigros.apk
-          
-          echo "✅ 资源提取完成"
-          echo "结束时间: $(date)"
-
-      # 14. 调试：检查生成的资源
-      - name: Debug - Check generated resources
+      # 【核心】步骤10：通过修改 config.ini 进行分批
+      - name: Run resource.py by Type (Modify Config)
         working-directory: ./resource
         run: |
-          echo "=== 生成的资源文件夹大小 ==="
+          echo "开始通过修改配置分批处理..."
+          echo "总开始时间: $(date)"
+          
+          # 定义处理顺序（可根据需要调整）
+          RESOURCE_TYPES=("avatar" "Chart" "illustrationBlur" "illustrationLowRes" "illustration" "music")
+          
+          # 记录原始配置内容，用于最后恢复
+          ORIGINAL_CONFIG=$(cat config.ini)
+          
+          for CURRENT_TYPE in "${RESOURCE_TYPES[@]}"; do
+            echo ""
+            echo "======= 开始处理类型: $CURRENT_TYPE ======="
+            echo "批次开始时间: $(date)"
+            
+            # 1. 修改 config.ini：将所有类型设为 False，然后将当前类型设为 True
+            # 注意：脚本配置中 'Chart' 首字母大写，而其他为小写
+            sed -i "s/^\(avatar\|Chart\|illustrationBlur\|illustrationLowRes\|illustration\|music\) = .*$/\1 = False/" config.ini
+            sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini
+            
+            # 2. 显示修改后的配置（调试用）
+            echo "修改后的 config.ini 相关部分:"
+            grep -E "^(avatar|Chart|illustration|music)" config.ini
+            echo "------------------------"
+            
+            # 3. 运行脚本（仅处理当前类型）
+            echo "启动 resource.py..."
+            python resource.py Phigros.apk 2>&1 | tail -30
+            
+            # 4. 批次结束后强制垃圾回收并稍作等待
+            python3 -c "import gc; gc.collect()"
+            sleep 2
+            
+            echo "======= 完成处理类型: $CURRENT_TYPE ======="
+            echo "批次结束时间: $(date)"
+          done
+          
+          # 所有批次完成后，恢复原始配置
+          echo "$ORIGINAL_CONFIG" > config.ini
+          echo "✅ 已恢复原始 config.ini 配置"
+          
+          echo ""
+          echo "✅ 所有类型分批处理完成"
+          echo "总结束时间: $(date)"
+
+      # 步骤11-14：资源检查和发布阶段
+      - name: Check generated resources
+        working-directory: ./resource
+        run: |
+          echo "=== 最终生成的资源统计 ==="
           for dir in avatar chart illustration illustrationBlur illustrationLowRes music; do
             if [ -d "$dir" ]; then
-              size=$(du -sh "$dir" 2>/dev/null | cut -f1)
-              count=$(find "$dir" -type f | wc -l)
-              echo "$dir: $size ($count 个文件)"
-            else
-              echo "$dir: 目录不存在"
+              COUNT=$(find "$dir" -type f 2>/dev/null | wc -l)
+              SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
+              echo "$dir: $COUNT 个文件 ($SIZE)"
             fi
           done
 
-      # 15. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -181,33 +128,20 @@ jobs:
           ref: master
           path: build
 
-      # 16. 发布资源到构建仓库
       - name: Publish resources
         working-directory: ./resource
         run: |
-          echo "正在同步资源到build目录..."
           rsync -av --delete \
-            avatar \
-            chart \
-            illustration \
-            illustrationBlur \
-            illustrationLowRes \
-            music \
+            avatar chart illustration illustrationBlur illustrationLowRes music \
             ../build/
-          echo "✅ 资源同步完成"
 
-      # 17. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
-          echo "准备提交更改..."
           git config user.name "github-actions[bot]"
           git config user.email "github-actions@users.noreply.github.com"
           git add .
-          if git diff --cached --quiet; then
-            echo "没有检测到更改，跳过提交。"
-          else
-            git commit -m "自动更新资源 - $(date +'%Y-%m-%d %H:%M:%S')"
+          if ! git diff --cached --quiet; then
+            git commit -m "自动更新资源 (配置分批) - $(date +'%Y-%m-%d %H:%M:%S')"
             git push origin master
-            echo "✅ 更改已提交并推送"
           fi
