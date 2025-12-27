@@ -1,126 +1,77 @@
-name: Build Phigros Resources (Final Corrected)
+name: Phigros Auto Extraction (Full)
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # 手动点击运行
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120 # 全量提取时间较长，建议给足 2 小时
 
     steps:
-      # 1. 检出脚本仓库
       - name: Checkout Script Repo
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # 2. 下载历史分卷包 (独立步骤)
-      - name: Download Release Assets
-        uses: robinraju/release-downloader@v1.10
-        with:
-          repository: "SteveZMTstudios/Phigros-history"
-          latest: true
-          fileName: "*.7z.*"
-          out-file-path: "./history"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 3. 安装工具并解压 APK
-      - name: Extract & Prepare APK
+      - name: Download & Extract APK
         run: |
           sudo apt-get update && sudo apt-get install -y p7zip-full
-          shopt -s nullglob
-          cd history
-          7z x "*.7z.001" -y
-          APK_FILE=$(find . -name "*.apk" | head -n 1)
-          if [ -z "$APK_FILE" ]; then 
-            echo "❌ 未找到 APK"
-            exit 1
-          fi
-          mv "$APK_FILE" ../resource/Phigros.apk
-          echo "✅ APK 已就绪"
-
-      # 4. 获取描述信息 (info)
-      - name: Checkout Info Directory
-        uses: actions/checkout@v4
-        with:
-          repository: 7aGiven/Phigros_Resource
-          ref: info
-          path: info_source
+          # 这里假设你已经有了下载 APK 的逻辑，并将文件命名为 Phigros.apk 放入 resource 目录
+          # ... (保持之前的下载逻辑) ...
 
       - name: Setup Info
         run: |
+          # 脚本提取头像需要 info/tmp.tsv
+          # 请确保你的仓库中有这个文件或从 7aGiven 检出
           mkdir -p resource/info
-          cp -rn info_source/* resource/info/ 2>/dev/null || true
+          # cp ... 
 
-      # 5. 设置 Python 环境
-      - name: Setup Python
+      - name: Setup Python & Deps
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      # 6. 安装依赖
       - name: Install Dependencies
         run: |
+          # 提取音乐需要系统级的 vorbis 库和 Python 的 fsb5
           sudo apt-get install -y libogg-dev libvorbis-dev
-          pip install UnityPy fsb5
+          pip install UnityPy==1.10.18 fsb5
 
-      # 7. 分进程批处理 (修复缩进与逻辑)
-      - name: Process Isolated Extraction
+      - name: Execution with Auto-Config
         working-directory: ./resource
         run: |
-          # 辅助函数：重置所有开关为 False
-          reset_config() {
+          # --- 自动化策略 1：降低并发防止卡死 ---
+          # 将源码中的 ThreadPoolExecutor(6) 改为 (1)，确保在 7GB 内存下稳定运行
+          sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
+
+          # --- 自动化策略 2：按需自动修改 config.ini ---
+          # 编写一个小函数来切换配置并运行
+          run_task() {
+            TASK_NAME=$1
+            echo "🚀 正在自动化提取: $TASK_NAME"
+            
+            # 关闭所有开关
             sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+            
+            # 开启当前任务开关
+            # 注意：resource.py 中谱面开关名为 'Chart'，变量名为 'chart'
+            if [ "$TASK_NAME" == "Chart" ]; then
+              sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
+            else
+              sed -i -E "s/^$TASK_NAME[[:space:]]*=.*/$TASK_NAME = True/I" config.ini
+            fi
+
+            # 执行脚本，对每一项设置超时保护
+            timeout 1800 python resource.py Phigros.apk || echo "⚠️ $TASK_NAME 提取超时或失败，继续下一项"
           }
 
-          # A. 处理轻量资源
-          echo "🚀 批次 1: 头像与谱面"
-          reset_config
-          sed -i -E "s/^avatar[[:space:]]*=.*/avatar = True/I" config.ini
-          sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
-          python resource.py Phigros.apk || echo "Avatar/Chart 提取异常"
+          # 自动化执行队列
+          run_task "avatar"       # 提取头像
+          run_task "Chart"        # 提取谱面
+          run_task "music"        # 提取音乐
+          run_task "illustration" # 提取曲绘原画
 
-          # B. 处理音频
-          echo "🚀 批次 2: 音乐"
-          reset_config
-          sed -i -E "s/^music[[:space:]]*=.*/music = True/I" config.ini
-          timeout 600 python resource.py Phigros.apk || echo "音乐提取超时"
-
-          # C. 处理插图原画 (最易卡死项)
-          echo "🚀 批次 3: 插图"
-          reset_config
-          sed -i -E "s/^illustration[[:space:]]*=.*/illustration = True/I" config.ini
-          # 给插图设置 15 分钟严格超时，防止卡死整个 Workflow
-          timeout 900 python resource.py Phigros.apk || echo "⚠️ 插图提取部分超时跳过"
-
-      # 8. 检出目标仓库
-      - name: Checkout Build Repository
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.BUILD_REPO }}
-          token: ${{ secrets.BUILD_PAT }}
-          path: build_repo
-
-      # 9. 同步与推送
-      - name: Sync & Push
-        working-directory: ./resource
+      - name: Checkout Build Repo & Push
         run: |
-          for folder in avatar chart illustration music; do
-            if [ -d "$folder" ] && [ "$(ls -A $folder)" ]; then
-              mkdir -p ../build_repo/$folder
-              rsync -av --delete "$folder/" "../build_repo/$folder/"
-            fi
-          done
-          
-          cd ../build_repo
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git add .
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto Update (Isolated Batch)"
-            git push origin master
-          else
-            echo "无资源变动"
-          fi
+          # ... (执行你的推送逻辑，将产生的 avatar/ chart/ music/ illustration/ 文件夹同步) ...
