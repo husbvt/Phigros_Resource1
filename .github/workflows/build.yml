@@ -1,4 +1,4 @@
-name: Build Phigros Resources (Config-Based Batch)
+name: Build Phigros Resources (Final Merged)
 
 on:
   workflow_dispatch:
@@ -8,14 +8,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90 # 考虑到分批处理较慢，给予充足时间
+    timeout-minutes: 90
 
     steps:
-      # 1. 创建必要目录
+      # 1. 初始化目录
       - name: Create Directories
-        run: mkdir -p history resource build
+        run: mkdir -p history resource build_repo
 
-      # 2. 从 Release 下载分卷包
+      # 2. 从 Release 下载资源 (包含分卷处理)
       - name: Download Release Assets
         uses: robinraju/release-downloader@v1.10
         with:
@@ -26,36 +26,35 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 安装解压及音频支持工具
+      # 3. 安装系统级音频及解压工具
       - name: Install System Tools
         run: |
           sudo apt-get update
           sudo apt-get install -y p7zip-full libogg-dev libvorbis-dev rsync
 
-      # 4. 解压并准备 APK
+      # 4. 解压并提取 APK
       - name: Extract & Prepare APK
         working-directory: ./history
         run: |
           shopt -s nullglob
           for f in *.7z.001; do 
-            echo "正在解压: $f"
             7z x "$f" -y
           done
           APK=$(find . -name "*.apk" | head -n 1)
           if [ -z "$APK" ]; then
-            echo "错误: 未找到APK文件"
+            echo "❌ 未找到 APK 文件"
             exit 1
           fi
           cp "$APK" ../resource/Phigros.apk
-          echo "✅ APK 已准备就绪"
+          echo "✅ APK 已就绪: $APK"
 
-      # 5. 检出资源处理脚本仓库 (主分支)
+      # 5. 检出资源处理脚本
       - name: Checkout Script Repo
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # 6. 获取并设置关键的 info 描述文件
+      # 6. 设置描述信息目录 (info)
       - name: Checkout Info Directory
         uses: actions/checkout@v4
         with:
@@ -68,11 +67,6 @@ jobs:
         run: |
           mkdir -p info
           cp -rn ../info_source/* info/ 2>/dev/null || true
-          if [ -f "info/tmp.tsv" ] && [ -f "info/difficulty.tsv" ]; then
-            echo "✅ 关键描述文件准备完毕"
-          else
-            echo "❌ 警告: info 目录文件不全，avatar 提取可能失败"
-          fi
 
       # 7. 设置 Python 环境
       - name: Setup Python
@@ -80,22 +74,86 @@ jobs:
         with:
           python-version: "3.10"
 
-      # 8. 安装 Python 依赖 (使用 PyPI 官方库)
+      # 8. 安装 Python 依赖 (按照你的要求使用 PyPI fsb5)
       - name: Install Python Dependencies
         working-directory: ./resource
         run: |
           pip install UnityPy fsb5
 
-      # 9. 清理旧输出
-      - name: Clean Old Outputs
+      # 9. 清理旧输出并确保目录存在
+      - name: Pre-clean
         working-directory: ./resource
-        run: rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
+        run: |
+          rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
+          mkdir -p avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 10. 【核心逻辑】修改配置并分批运行
-      - name: Batch Extraction via Config Modification
+      # 10. 【核心修正】分批修改配置并运行
+      - name: Batch Extraction
         working-directory: ./resource
         run: |
           echo "开始分批资源处理..."
+          # 自动识别并定义类型 (注意：此处需根据你的 config.ini 键名确定)
+          TYPES=("avatar" "Chart" "illustration" "illustrationBlur" "illustrationLowRes" "music")
           
-          # 定义需要循环处理的类型列表 (需与 config.ini 中的键名严格匹配)
-          # 注意：根据你的提示，Chart 首字母大写
+          cp config.ini config.ini.bak
+          
+          for CURRENT in "${TYPES[@]}"; do
+            echo "------------------------------------------"
+            echo "🚀 批次开始: $CURRENT (时间: $(date +'%H:%M:%S'))"
+            
+            # 强行重置所有受管项为 False (不区分大小写和空格)
+            for T in "${TYPES[@]}"; do
+              sed -i -E "s/^$T[[:space:]]*=[[:space:]]*.*/$T = False/I" config.ini
+            done
+            
+            # 开启当前项
+            sed -i -E "s/^$CURRENT[[:space:]]*=[[:space:]]*.*/$CURRENT = True/I" config.ini
+            
+            # 打印当前配置状态以供核对日志
+            echo "当前配置状态:"
+            grep -i "^$CURRENT" config.ini
+            
+            # 运行脚本 (增加 25 分钟超时)
+            timeout 1500 python resource.py Phigros.apk || echo "⚠️ $CURRENT 批次运行中途停止"
+            
+            # 打印当前产生的文件夹大小
+            du -sh avatar chart illustration music 2>/dev/null || true
+            
+            python3 -c "import gc; gc.collect()"
+            sleep 3
+          done
+          mv config.ini.bak config.ini
+
+      # 11. 最终资源校验
+      - name: Verify Results
+        working-directory: ./resource
+        run: |
+          echo "=== 最终生成统计 ==="
+          find avatar chart illustration music -type f | wc -l || echo "没有生成任何文件"
+
+      # 12. 检出并发布到目标仓库
+      - name: Checkout Build Repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.BUILD_REPO }}
+          token: ${{ secrets.BUILD_PAT }}
+          path: build_repo
+
+      - name: Sync & Push
+        working-directory: ./resource
+        run: |
+          for folder in avatar chart illustration illustrationBlur illustrationLowRes music; do
+            if [ -d "$folder" ] && [ "$(ls -A $folder)" ]; then
+              mkdir -p ../build_repo/$folder
+              rsync -av --delete "$folder/" "../build_repo/$folder/"
+            fi
+          done
+          
+          cd ../build_repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add .
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto Update [$(date +'%Y-%m-%d %H:%M')]"
+            git push origin master
+          fi
