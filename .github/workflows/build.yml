@@ -19,22 +19,39 @@ jobs:
       - name: Install p7zip
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
+      # >>> 这里是新添加的调试步骤 <<<
+      - name: Debug List History Directory (Before Extract)
+        working-directory: ./history
+        run: |
+          echo "=== 列出 history 目录的所有文件 ==="
+          find . -type f | sort || echo "find命令执行失败"
+          echo "=== 列出所有 .7z* 文件 ==="
+          find . -name "*.7z*" 2>/dev/null | sort || echo "未找到.7z文件"
+          echo "=== 列出所有 .apk 文件 ==="
+          find . -name "*.apk" 2>/dev/null | sort || echo "未找到.apk文件"
+
       - name: Extract & Prepare APK
-        working-directory: ./history  # 【核心修复】指定此步骤在history目录下运行
+        working-directory: ./history
         run: |
           shopt -s nullglob
+          echo "开始解压，当前目录下的.7z.001文件有："
+          ls -la *.7z.001 2>/dev/null || echo "未直接匹配到*.7z.001文件"
+
           for f in *.7z.001; do
-            echo "Extracting $f"
+            echo "解压: $f"
             7z x "$f"
           done
 
+          echo "=== 解压后搜索APK文件 ==="
           APK=$(find . -name "*.apk" | head -n 1)
           if [ -z "$APK" ]; then
-            echo "❌ APK not found"
+            echo "❌ 错误：未找到任何.apk文件。"
+            echo "当前目录结构："
+            find . -type f | sort
             exit 1
           fi
 
-          echo "Found APK: $APK"
+          echo "找到APK: $APK"
           cp "$APK" Phigros.apk
 
       - name: Checkout Phigros_Resource1
@@ -51,12 +68,12 @@ jobs:
           python-version: "3.10"
 
       - name: Clean old outputs
-        working-directory: ./resource
+        working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
       - name: Run resources.py
-        working-directory: ./resource
+        working-directory: resource
         run: python resources.py
 
       - name: Checkout build repo
@@ -68,7 +85,7 @@ jobs:
           path: build
 
       - name: Publish resources
-        working-directory: ./resource  # 明确在此目录工作，使rsync源路径更直观
+        working-directory: ./resource
         run: |
           rsync -av --delete \
             avatar \
@@ -77,12 +94,11 @@ jobs:
             illustrationBlur \
             illustrationLowRes \
             music \
-            ../build/  # 目标路径改为上一级目录的build文件夹
+            ../build/
 
       - name: Commit & Push
         working-directory: ./build
         run: |
-          pwd  # 调试用：确认当前目录
           git config user.name "github-actions[bot]"
           git config user.email "github-actions@users.noreply.github.com"
           git add .
