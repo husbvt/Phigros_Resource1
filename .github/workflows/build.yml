@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45  # 设置总超时时间
 
     steps:
       # 1. 创建历史目录
@@ -61,6 +62,9 @@ jobs:
           fi
           echo "Found APK: $APK"
           cp "$APK" Phigros.apk
+          # 解压完成后立即清理分卷文件以释放空间
+          rm -f *.7z.* 2>/dev/null || true
+          echo "已清理分卷文件释放空间"
 
       # 6. 检出资源处理脚本仓库
       - name: Checkout Phigros_Resource1
@@ -95,76 +99,80 @@ jobs:
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 11. 【关键】增加系统内存和交换空间
+      # 11. 增加系统内存和交换空间
       - name: Increase system resources
         run: |
           echo "=== 增加系统资源 ==="
-          # 增加交换空间 (4GB)
           sudo fallocate -l 4G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-          
-          # 调整系统限制
           sudo sysctl -w vm.swappiness=60
           sudo sysctl -w vm.vfs_cache_pressure=50
-          
           echo "✅ 系统资源已优化"
-          free -h
-          df -h
 
-      # 12. 运行资源提取脚本（带资源监控）
+      # 12. 关键：清理磁盘空间
+      - name: Clean up disk space
+        run: |
+          echo "=== 清理磁盘空间 ==="
+          echo "清理前磁盘使用:"
+          df -h
+          
+          # 清理系统缓存和不需要的大文件
+          sudo apt-get clean
+          sudo rm -rf /var/lib/apt/lists/*
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /imagegeneration
+          
+          # 清理各种缓存
+          sudo rm -rf /tmp/*
+          rm -rf ~/.cache/pip
+          
+          echo "清理后磁盘使用:"
+          df -h
+          echo "✅ 磁盘清理完成"
+
+      # 13. 运行资源提取脚本
       - name: Run resource.py
         working-directory: resource
         run: |
           echo "正在运行 resource.py 脚本..."
           echo "开始时间: $(date)"
+          echo "当前磁盘空间:"
+          df -h .
           
-          # 监控资源使用的后台任务
-          (while true; do
-            echo "=== 资源监控 $(date +%H:%M:%S) ==="
-            free -m | awk 'NR==2{printf "内存: %.2f%% (%.0fM/%.0fM)\n", $3/$2*100, $3/1024, $2/1024}'
-            df -h . | awk 'NR==2{printf "磁盘: %s已用(剩余%s)\n", $5, $4}'
-            sleep 30
-          done) &
-          MONITOR_PID=$!
-          
-          # 运行脚本，增加Python内存管理和超时设置
-          timeout 1800 python -X pycache_prefix=/tmp/pycache -X warn_default_encoding resource.py Phigros.apk || SCRIPT_EXIT=$?
-          
-          # 停止监控
-          kill $MONITOR_PID 2>/dev/null || true
-          
-          # 检查退出状态
-          if [ ${SCRIPT_EXIT:-0} -eq 0 ]; then
-            echo "✅ 资源提取完成"
-            echo "结束时间: $(date)"
-          elif [ ${SCRIPT_EXIT:-0} -eq 124 ]; then
-            echo "⚠️ 脚本执行超时 (30分钟)"
-            exit 1
-          else
-            echo "❌ 脚本执行失败，退出代码: ${SCRIPT_EXIT}"
-            echo "最后处理的文件可能在上一行日志中"
+          # 运行脚本前再次确认APK文件存在
+          if [ ! -f "Phigros.apk" ]; then
+            echo "❌ 错误：Phigros.apk 不存在"
             exit 1
           fi
+          
+          echo "APK文件大小: $(ls -lh Phigros.apk | awk '{print $5}')"
+          
+          # 运行脚本
+          python resource.py Phigros.apk
+          
+          echo "✅ 资源提取完成"
+          echo "结束时间: $(date)"
 
-      # 13. 调试：检查生成的资源
+      # 14. 调试：检查生成的资源
       - name: Debug - Check generated resources
         working-directory: ./resource
         run: |
           echo "=== 生成的资源文件夹大小 ==="
-          du -sh avatar/ chart/ illustration/ music/ 2>/dev/null || echo "某个目录不存在"
-          echo "=== 各目录文件数量 ==="
           for dir in avatar chart illustration illustrationBlur illustrationLowRes music; do
             if [ -d "$dir" ]; then
+              size=$(du -sh "$dir" 2>/dev/null | cut -f1)
               count=$(find "$dir" -type f | wc -l)
-              echo "$dir: $count 个文件"
+              echo "$dir: $size ($count 个文件)"
             else
               echo "$dir: 目录不存在"
             fi
           done
 
-      # 14. 检出构建产物仓库
+      # 15. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -173,7 +181,7 @@ jobs:
           ref: master
           path: build
 
-      # 15. 发布资源到构建仓库
+      # 16. 发布资源到构建仓库
       - name: Publish resources
         working-directory: ./resource
         run: |
@@ -188,7 +196,7 @@ jobs:
             ../build/
           echo "✅ 资源同步完成"
 
-      # 16. 提交并推送更改
+      # 17. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
