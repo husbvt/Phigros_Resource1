@@ -24,15 +24,13 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 3. 解压并强制定位 APK
+      - name: 3. 解压并定位 APK
         run: |
           sudo apt-get update && sudo apt-get install -y p7zip-full rsync
           mkdir -p ./extracted
           7z x "downloads/*.7z.001" -o./extracted -y || echo "7z Skip"
-          
-          echo "🔎 正在定位 APK..."
           FOUND_APK=$(find . -name "*.apk" -type f | head -n 1)
-          if [ -z "$FOUND_APK" ]; then echo "❌ APK 找不到"; exit 1; fi
+          if [ -z "$FOUND_APK" ]; then echo "❌ APK NOT FOUND"; exit 1; fi
           mkdir -p ./resource
           cp "$FOUND_APK" ./resource/Phigros.apk
 
@@ -48,39 +46,44 @@ jobs:
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 6. 自动化分批提取与即时合并
+      - name: 6. 自动化分阶段提取 (平铺逻辑)
         working-directory: ./resource
         run: |
-          # 核心修复：1线程减少内存压力
+          # 强制并发为 1 减少内存消耗
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
 
-          run_batch() {
-            local task=$1
-            echo "------------------------------------------"
-            echo "🚀 正在提取批次: $task"
-            
-            # 自动化配置
-            sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
-            if [ "$task" == "Chart" ]; then
-              sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
-            else
-              sed -i -E "s/^$task[[:space:]]*=.*/$task = True/I" config.ini
-            fi
-            
-            # 执行 Python 提取
-            python resource.py Phigros.apk || echo "⚠️ $task 部分失败"
-            
-            # 即时同步到 build_repo 并清理空间
-            for f in avatar chart illustration music; do
-              if [ -d "$f" ] && [ "$(ls -A "$f" 2>/dev/null)" ]; then
-                echo "📦 暂存 $f 结果..."
-                mkdir -p "../build_repo/$f"
-                rsync -av "$f/" "../build_repo/$f/"
-                rm -rf "${f:?}"/*
-              fi
-            done
-          }
+          # --- 1. 提取头像 ---
+          echo "🚀 Processing: avatar"
+          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          sed -i -E "s/^avatar[[:space:]]*=.*/avatar = True/I" config.ini
+          python resource.py Phigros.apk || echo "Skip"
+          if [ -d "avatar" ]; then rsync -av "avatar/" "../build_repo/avatar/"; rm -rf "avatar"/*; fi
 
-          run_batch "avatar"
-          run_batch "Chart"
-          run_
+          # --- 2. 提取谱面 ---
+          echo "🚀 Processing: Chart"
+          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
+          python resource.py Phigros.apk || echo "Skip"
+          if [ -d "chart" ]; then rsync -av "chart/" "../build_repo/chart/"; rm -rf "chart"/*; fi
+
+          # --- 3. 提取音乐 ---
+          echo "🚀 Processing: music"
+          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          sed -i -E "s/^music[[:space:]]*=.*/music = True/I" config.ini
+          python resource.py Phigros.apk || echo "Skip"
+          if [ -d "music" ]; then rsync -av "music/" "../build_repo/music/"; rm -rf "music"/*; fi
+
+          # --- 4. 提取曲绘 ---
+          echo "🚀 Processing: illustration"
+          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          sed -i -E "s/^illustration[[:space:]]*=.*/illustration = True/I" config.ini
+          python resource.py Phigros.apk || echo "Skip"
+          if [ -d "illustration" ]; then rsync -av "illustration/" "../build_repo/illustration/"; rm -rf "illustration"/*; fi
+
+      - name: 7. 最终推送至 husbvt 仓库
+        working-directory: ./build_repo
+        env:
+          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.nore
