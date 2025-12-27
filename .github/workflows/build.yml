@@ -3,11 +3,6 @@ name: Build Phigros Resources
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 * * * *"name: Build Phigros Resources
-
-on:
-  workflow_dispatch:
-  schedule:
     - cron: "0 * * * *"
 
 jobs:
@@ -69,14 +64,12 @@ jobs:
         with:
           python-version: "3.10"
 
-      # 8. [新增] 安装Python依赖 (包括UnityPy)
+      # 8. 安装Python依赖 (包括UnityPy)
       - name: Install Python dependencies
         working-directory: ./resource
         run: |
           echo "正在安装Python依赖包..."
-          # 安装resource.py脚本运行所需的库
           pip install UnityPy
-          # 如果resource.py脚本目录有requirements.txt，也可以一并安装
           if [ -f "requirements.txt" ]; then
             pip install -r requirements.txt
           fi
@@ -129,119 +122,5 @@ jobs:
             echo "No changes"
           else
             git commit -m "auto update"
-            git push origin master
-          fi
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-
-    steps:
-      # 1. 创建历史目录
-      - name: Create History Directory
-        run: mkdir -p history
-
-      # 2. 下载Release中的全部分卷文件
-      - name: Download ALL Release Assets
-        uses: robinraju/release-downloader@v1.10
-        with:
-          repository: "SteveZMTstudios/Phigros-history"
-          latest: true
-          fileName: "*.7z.*"
-          out-file-path: "./history"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 3. 验证下载的分卷文件
-      - name: Check Downloaded Archives
-        working-directory: ./history
-        run: |
-          echo "=== 已下载的分卷文件 ==="
-          ls -la *.7z.* 2>/dev/null | sort -V
-          VOLUME_COUNT=$(ls *.7z.* 2>/dev/null | wc -l)
-          echo "找到 $VOLUME_COUNT 个分卷文件"
-
-      # 4. 安装解压工具
-      - name: Install p7zip
-        run: sudo apt-get update && sudo apt-get install -y p7zip-full
-
-      # 5. 解压分卷包
-      - name: Extract & Prepare APK
-        working-directory: ./history
-        run: |
-          FIRST_VOLUME=$(ls *.7z.001 2>/dev/null | head -n 1)
-          7z x "$FIRST_VOLUME" -y
-
-      # 6. 查找并准备APK文件
-      - name: Find and Prepare APK
-        working-directory: ./history
-        run: |
-          APK=$(find . -type f \( -name "*.apk" -o -name "*.xapk" \) | head -n 1)
-          cp "$APK" Phigros.apk
-          echo "APK文件已准备"
-
-      # 7. 检出资源处理脚本仓库
-      - name: Checkout Phigros_Resource1
-        uses: actions/checkout@v4
-        with:
-          path: resource
-
-      # 8. 更新APK到资源目录
-      - name: Update APK
-        run: cp history/Phigros.apk resource/Phigros.apk
-
-      # 9. 设置Python环境
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-
-      # 10. 清理旧的输出文件
-      - name: Clean old outputs
-        working-directory: resource
-        run: |
-          rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
-
-      # 11. 运行资源提取脚本 (关键修改：使用resource.py)
-      - name: Run resource.py
-        working-directory: resource
-        run: |
-          echo "正在运行 resource.py 脚本..."
-          python resource.py
-          echo "资源提取完成"
-
-      # 12. 检出构建产物仓库
-      - name: Checkout build repo
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ secrets.BUILD_REPO }}
-          token: ${{ secrets.BUILD_PAT }}
-          ref: master
-          path: build
-
-      # 13. 发布资源到构建仓库
-      - name: Publish resources
-        working-directory: ./resource
-        run: |
-          rsync -av --delete \
-            avatar \
-            chart \
-            illustration \
-            illustrationBlur \
-            illustrationLowRes \
-            music \
-            ../build/
-
-      # 14. 提交并推送更改
-      - name: Commit & Push
-        working-directory: ./build
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add .
-          if git diff --cached --quiet; then
-            echo "没有更改"
-          else
-            git commit -m "自动更新资源 $(date +'%Y-%m-%d %H:%M')"
             git push origin master
           fi
