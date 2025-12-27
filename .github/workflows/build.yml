@@ -1,4 +1,4 @@
-name: Build Phigros Resources (超时控制版)
+name: Build Phigros Resources (最终优化版)
 
 on:
   workflow_dispatch:
@@ -8,14 +8,14 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90  # 整体超时延长
+    timeout-minutes: 90
 
     steps:
       # 1. 创建历史目录
       - name: Create History Directory
         run: mkdir -p history
 
-      # 2. 从Release下载全部分卷文件
+      # 2. 下载全部分卷文件
       - name: Download ALL Release Assets
         uses: robinraju/release-downloader@v1.10
         with:
@@ -26,27 +26,50 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 3. 安装解压工具
-      - name: Install p7zip
-        run: sudo apt-get update && sudo apt-get install -y p7zip-full
+      # 3. 安装系统工具
+      - name: Install System Tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full wget
 
-      # 4. 解压分卷包并提取APK
+      # 4. 安装正确的音频编解码器库
+      - name: Install Audio Codec Libraries
+        run: |
+          echo "=== 修复音频库依赖 ==="
+          sudo apt-get update
+          sudo apt-get install -y \
+            libogg-dev \
+            libvorbis-dev \
+            libvorbis0a \
+            libvorbisenc2 \
+            libvorbisfile3 \
+            libvorbisidec1
+          echo "✅ 音频库安装完成"
+
+      # 5. 解压并准备APK
       - name: Extract & Prepare APK
         working-directory: ./history
         run: |
           shopt -s nullglob
-          for f in *.7z.001; do 7z x "$f"; done
+          for f in *.7z.001; do
+            echo "解压: $f"
+            7z x "$f" -y
+          done
           APK=$(find . -name "*.apk" | head -n 1)
+          if [ -z "$APK" ]; then
+            echo "❌ APK not found"
+            exit 1
+          fi
           cp "$APK" Phigros.apk
-          rm -f *.7z.*
+          rm -f *.7z.* 2>/dev/null || true
 
-      # 5. 检出资源处理脚本仓库
+      # 6. 检出资源脚本仓库
       - name: Checkout Phigros_Resource1
         uses: actions/checkout@v4
         with:
           path: resource
 
-      # 6. 获取并设置 info 目录
+      # 7. 获取 info 目录
       - name: Checkout Info Directory
         uses: actions/checkout@v4
         with:
@@ -59,29 +82,14 @@ jobs:
         run: |
           echo "=== 设置 info 目录 ==="
           mkdir -p info
-          echo "源目录内容:"
-          ls -la ../info_source/
-          echo "复制文件到 resource/info ..."
           cp -rn ../info_source/* info/ 2>/dev/null || true
-          echo "目标目录内容:"
-          ls -la info/
-          echo "关键文件检查:"
-          [ -f "info/tmp.tsv" ] && echo "✅ tmp.tsv 存在" || echo "❌ tmp.tsv 缺失"
+          echo "关键文件状态:"
+          [ -f "info/tmp.tsv" ] && echo "✅ tmp.tsv 存在" || echo "❌ tmp.tsv 缺失（将跳过avatar处理）"
           [ -f "info/difficulty.tsv" ] && echo "✅ difficulty.tsv 存在" || echo "❌ difficulty.tsv 缺失"
 
-      # 7. 更新APK文件
+      # 8. 更新APK
       - name: Update APK
         run: cp history/Phigros.apk resource/Phigros.apk
-
-      # 8. 验证APK文件完整性
-      - name: Verify APK File
-        working-directory: ./resource
-        run: |
-          echo "=== 验证APK文件 ==="
-          echo "文件大小:"
-          ls -lh Phigros.apk
-          echo "尝试读取APK基本信息:"
-          7z l Phigros.apk 2>/dev/null | grep -E "(\.apk$|files|folders)" | head -5 || echo "无法读取APK"
 
       # 9. 设置Python环境
       - name: Setup Python
@@ -90,146 +98,132 @@ jobs:
           python-version: "3.10"
 
       # 10. 安装Python依赖
-      - name: Install Python dependencies
+      - name: Install Python Dependencies
         working-directory: ./resource
         run: |
-          echo "正在安装Python依赖包..."
-          pip install UnityPy fsb5
-          echo "依赖安装完成。"
+          echo "=== 安装Python依赖 ==="
+          pip uninstall -y fsb5 UnityPy 2>/dev/null || true
+          pip install UnityPy
+          pip install "git+https://github.com/HearthSim/python-fsb5.git"
+          echo "✅ 依赖安装完成"
 
-      # 11. 清理旧的输出文件
-      - name: Clean old outputs
+      # 11. 清理旧输出
+      - name: Clean Old Outputs
         working-directory: resource
         run: |
-          rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
+          # 仅清理需要的目录
+          rm -rf avatar chart illustration music
 
-      # 12. 【核心改进】通过修改 config.ini 进行分批处理（带超时控制）
-      - name: Run resource.py by Type (With Timeout)
+      # 12. 核心分批处理（排除不需要的类型）
+      - name: Run Resource Extraction (核心类型)
         working-directory: ./resource
         run: |
-          echo "开始通过修改配置分批处理..."
+          echo "开始核心资源分批处理..."
           echo "总开始时间: $(date)"
           
-          # 调整处理顺序：将Chart移到后面，先处理其他类型
-          RESOURCE_TYPES=("avatar" "illustrationBlur" "illustrationLowRes" "illustration" "music" "Chart")
+          # 核心处理类型（排除不需要的IllustrationBlur/IllustrationLowRes）
+          CORE_TYPES=("illustration" "Chart" "music")
+          [ -f "info/tmp.tsv" ] && CORE_TYPES=("avatar" "${CORE_TYPES[@]}")
           
-          # 记录原始配置
-          ORIGINAL_CONFIG=$(cat config.ini)
+          echo "将处理核心类型: ${CORE_TYPES[*]}"
+          echo "跳过类型: IllustrationBlur, IllustrationLowRes"
           
-          # 成功处理的类型计数器
-          SUCCESS_COUNT=0
+          # 备份原始配置
+          [ -f "config.ini" ] && cp config.ini config.ini.backup
+          
+          SUCCESS_TYPES=""
           FAILED_TYPES=""
           
-          for CURRENT_TYPE in "${RESOURCE_TYPES[@]}"; do
+          for CURRENT_TYPE in "${CORE_TYPES[@]}"; do
             echo ""
-            echo "======= 开始处理类型: $CURRENT_TYPE ======="
-            echo "批次开始时间: $(date)"
+            echo "======= 处理类型: $CURRENT_TYPE ======="
+            echo "开始时间: $(date)"
             
-            # 1. 修改配置文件
-            sed -i "s/^\(avatar\|Chart\|illustrationBlur\|illustrationLowRes\|illustration\|music\) = .*$/\1 = False/" config.ini
-            sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini
-            
-            # 2. 显示配置
-            echo "当前配置: $CURRENT_TYPE = True, 其他 = False"
-            
-            # 3. 运行脚本（带30分钟超时和完整日志捕获）
-            echo "启动 resource.py (30分钟超时控制)..."
-            
-            # 创建日志文件
-            LOG_FILE="${CURRENT_TYPE}_process.log"
-            
-            # 使用timeout命令，超时后发送SIGTERM信号
-            timeout --preserve-status -k 60 1800 python resource.py Phigros.apk 2>&1 | tee "$LOG_FILE"
-            
-            # 检查退出状态
-            EXIT_STATUS=$?
-            
-            if [ $EXIT_STATUS -eq 0 ]; then
-              echo "✅ $CURRENT_TYPE 处理成功"
-              SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
-              
-              # 显示处理时间统计
-              if grep -q "秒$" "$LOG_FILE"; then
-                echo "处理时间: $(grep '秒$' "$LOG_FILE" | tail -1)"
-              fi
-              
-            elif [ $EXIT_STATUS -eq 124 ] || [ $EXIT_STATUS -eq 137 ]; then
-              echo "❌ $CURRENT_TYPE 处理超时或被终止"
-              FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
-              
-              # 输出最后的关键日志帮助诊断
-              echo "最后50行日志:"
-              tail -50 "$LOG_FILE"
-              
-              # 检查是否有内存错误迹象
-              if grep -qi "killed\|oom\|out of memory" "$LOG_FILE"; then
-                echo "⚠️ 检测到可能的OOM（内存不足）错误"
-              fi
-              
-              # 强制清理可能的残留进程
-              pkill -f "resource.py" 2>/dev/null || true
-              
-            else
-              echo "❌ $CURRENT_TYPE 处理失败，退出代码: $EXIT_STATUS"
-              FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
-              
-              # 输出错误日志
-              echo "最后50行日志:"
-              tail -50 "$LOG_FILE"
-              
-              # 检查常见错误
-              if grep -qi "error\|exception\|traceback" "$LOG_FILE"; then
-                echo "错误摘要:"
-                grep -i "error\|exception\|traceback" "$LOG_FILE" | head -5
-              fi
+            # 跳过条件检查
+            if [ "$CURRENT_TYPE" = "avatar" ] && [ ! -f "info/tmp.tsv" ]; then
+              echo "⚠️ 跳过avatar（缺少tmp.tsv）"
+              FAILED_TYPES="$FAILED_TYPES(跳过:avatar)"
+              continue
             fi
             
-            # 4. 清理和恢复
-            rm -f "$LOG_FILE" 2>/dev/null || true
-            python3 -c "import gc; gc.collect()"
-            sleep 5  # 延长等待时间确保系统稳定
+            # 修改配置：确保所有类型为False，当前类型为True
+            # 保留IllustrationBlur和IllustrationLowRes的设置项但设为False
+            sed -i "s/^\(avatar\|Chart\|illustrationBlur\|illustrationLowRes\|illustration\|music\) = .*$/\\1 = False/" config.ini 2>/dev/null
+            sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini 2>/dev/null
             
-            echo "======= 完成处理类型: $CURRENT_TYPE ======="
-            echo "批次结束时间: $(date)"
-            echo "当前内存状态:"
-            free -h
+            echo "配置状态:"
+            grep -E "^(avatar|Chart|illustration|music)" config.ini 2>/dev/null || echo "使用默认配置"
+            
+            # 运行提取（15分钟超时）
+            echo "启动提取进程（超时:15分钟）..."
+            timeout 900 python resource.py Phigros.apk 2>&1 | tail -50
+            
+            EXIT_CODE=${PIPESTATUS[0]}
+            
+            if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
+              echo "❌ $CURRENT_TYPE 超时或被终止"
+              FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
+            elif [ $EXIT_CODE -eq 0 ]; then
+              echo "✅ $CURRENT_TYPE 成功"
+              SUCCESS_TYPES="$SUCCESS_TYPES $CURRENT_TYPE"
+            else
+              echo "❌ $CURRENT_TYPE 失败（代码:$EXIT_CODE）"
+              FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
+            fi
+            
+            # 清理和恢复
+            python3 -c "import gc; gc.collect()"
+            sleep 2
+            
+            echo "结束时间: $(date)"
           done
           
-          # 恢复原始配置
-          echo "$ORIGINAL_CONFIG" > config.ini
+          # 恢复配置
+          [ -f "config.ini.backup" ] && mv config.ini.backup config.ini
           
-          # 输出处理总结
+          # 最终报告
           echo ""
-          echo "======= 分批处理总结 ======="
-          echo "成功处理: $SUCCESS_COUNT/${#RESOURCE_TYPES[@]} 个类型"
-          if [ -n "$FAILED_TYPES" ]; then
-            echo "失败类型:$FAILED_TYPES"
-            echo "注意：部分类型处理失败，但工作流将继续"
-          else
-            echo "✅ 所有类型处理成功"
+          echo "======= 处理完成 ======="
+          echo "✅ 成功: $SUCCESS_TYPES"
+          [ -n "$FAILED_TYPES" ] && echo "❌ 失败/跳过: $FAILED_TYPES"
+          echo "总时间: $(date)"
+          
+          # 如果所有类型都失败，则工作流失败
+          if [ -z "$SUCCESS_TYPES" ]; then
+            echo "❌ 所有核心类型处理均失败"
+            exit 1
           fi
-          echo "总结束时间: $(date)"
 
-      # 13. 检查生成的资源
-      - name: Check generated resources
+      # 13. 验证生成资源
+      - name: Verify Generated Resources
         working-directory: ./resource
         run: |
-          echo "=== 生成的资源统计 ==="
-          TOTAL_FILES=0
-          for dir in avatar chart illustration illustrationBlur illustrationLowRes music; do
-            if [ -d "$dir" ]; then
+          echo "=== 生成资源验证 ==="
+          TOTAL_COUNT=0
+          for dir in avatar chart illustration music; do
+            if [ -d "$dir" ] && [ -n "$(ls -A $dir 2>/dev/null)" ]; then
               COUNT=$(find "$dir" -type f 2>/dev/null | wc -l)
               SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
-              echo "$dir: $COUNT 个文件 ($SIZE)"
-              TOTAL_FILES=$((TOTAL_FILES + COUNT))
+              echo "✅ $dir: $COUNT 文件 ($SIZE)"
+              TOTAL_COUNT=$((TOTAL_COUNT + COUNT))
             else
-              echo "$dir: 目录不存在"
+              echo "➖ $dir: 未生成或为空"
             fi
           done
-          echo "总计: $TOTAL_FILES 个文件"
+          echo "总计: $TOTAL_COUNT 个资源文件"
+          
+          # 确认不需要的目录确实不存在
+          echo "已跳过的目录状态:"
+          for dir in illustrationBlur illustrationLowRes; do
+            if [ -d "$dir" ]; then
+              echo "⚠️  $dir: 目录存在（但不需要）"
+            else
+              echo "➖ $dir: 目录不存在（符合预期）"
+            fi
+          done
 
-      # 14. 检出构建产物仓库
-      - name: Checkout build repo
+      # 14. 检出发布仓库
+      - name: Checkout Build Repository
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.BUILD_REPO }}
@@ -237,28 +231,41 @@ jobs:
           ref: master
           path: build
 
-      # 15. 发布资源到构建仓库
-      - name: Publish resources
+      # 15. 发布资源（仅发布需要的类型）
+      - name: Publish Resources
         working-directory: ./resource
         run: |
-          echo "正在同步资源到build目录..."
-          rsync -av --delete \
-            avatar chart illustration illustrationBlur illustrationLowRes music \
-            ../build/
-          echo "✅ 资源同步完成"
+          echo "正在发布核心资源..."
+          for dir in avatar chart illustration music; do
+            if [ -d "$dir" ] && [ -n "$(ls -A $dir 2>/dev/null)" ]; then
+              echo "发布 $dir..."
+              mkdir -p ../build/$dir
+              rsync -av --delete "$dir/" "../build/$dir/"
+            fi
+          done
+          echo "✅ 核心资源发布完成"
 
-      # 16. 提交并推送更改
-      - name: Commit & Push
+      # 16. 提交更改
+      - name: Commit Changes
         working-directory: ./build
         run: |
-          echo "准备提交更改..."
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions@users.noreply.github.com"
+          echo "提交更改..."
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
           git add .
-          if ! git diff --cached --quiet; then
-            git commit -m "自动更新资源 (带超时控制) - $(date +'%Y-%m-%d %H:%M:%S')"
-            git push origin master
-            echo "✅ 更改已提交并推送"
+          if git diff --cached --quiet; then
+            echo "没有变更需要提交"
           else
-            echo "没有检测到更改，跳过提交。"
+            git commit -m "自动更新核心资源 [$(date +'%Y-%m-%d %H:%M')]"
+            git push origin master
+            echo "✅ 变更已提交"
           fi
+
+      # 17. 最终状态报告
+      - name: Final Status Report
+        run: |
+          echo "=== 工作流执行完成 ==="
+          echo "完成时间: $(date +'%Y-%m-%d %H:%M:%S')"
+          echo "运行器: $(uname -a)"
+          echo "磁盘状态:"
+          df -h | grep -E "Filesystem|/dev/root"
