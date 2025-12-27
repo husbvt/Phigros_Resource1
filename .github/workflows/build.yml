@@ -20,8 +20,7 @@ jobs:
         with:
           repository: "SteveZMTstudios/Phigros-history"
           latest: true
-          # 关键修改：下载所有分卷，不仅是001
-          fileName: "*.7z.*"  # 匹配所有 .7z.001, .7z.002, .7z.003 等
+          fileName: "*.7z.*"
           out-file-path: "./history"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -32,15 +31,8 @@ jobs:
         run: |
           echo "=== 已下载的分卷文件 ==="
           ls -la *.7z.* 2>/dev/null | sort -V || echo "未找到分卷文件"
-          
-          # 检查分卷序列是否完整
           VOLUME_COUNT=$(ls *.7z.* 2>/dev/null | wc -l)
           echo "✅ 找到 $VOLUME_COUNT 个分卷文件"
-          
-          if [ $VOLUME_COUNT -eq 0 ]; then
-            echo "❌ 错误：未下载到任何分卷文件"
-            exit 1
-          fi
 
       # 4. 安装解压工具
       - name: Install p7zip
@@ -50,52 +42,24 @@ jobs:
       - name: Extract & Prepare APK
         working-directory: ./history
         run: |
-          echo "开始解压分卷压缩包..."
-          
-          # 查找第一个分卷
           FIRST_VOLUME=$(ls *.7z.001 2>/dev/null | head -n 1)
           if [ -z "$FIRST_VOLUME" ]; then
             echo "❌ 错误：找不到.7z.001文件"
-            echo "当前文件列表："
-            ls -la
             exit 1
           fi
-          
-          echo "使用第一个分卷解压：$FIRST_VOLUME"
-          echo "当前目录所有分卷："
-          ls *.7z.* 2>/dev/null | sort -V
-          
-          # 7z解压（现在应该能识别所有分卷）
-          if ! 7z x "$FIRST_VOLUME" -y; then
-            echo "❌ 解压失败！"
-            echo "可能原因：分卷不完整或损坏"
-            echo "文件校验："
-            ls -la *.7z.* | sort -V
-            exit 1
-          fi
-          
-          echo "✅ 解压完成"
+          7z x "$FIRST_VOLUME" -y
 
       # 6. 查找并准备APK文件
       - name: Find and Prepare APK
         working-directory: ./history
         run: |
-          echo "搜索APK文件..."
-          
-          # 查找APK文件（支持.apk和.xapk）
           APK=$(find . -type f \( -name "*.apk" -o -name "*.xapk" \) | head -n 1)
-          
           if [ -z "$APK" ]; then
             echo "❌ 未找到APK文件"
-            echo "解压内容："
-            find . -type f | sort
             exit 1
           fi
-          
-          echo "✅ 找到：$APK"
           cp "$APK" Phigros.apk
-          echo "✅ 已复制为 Phigros.apk"
-          ls -lh Phigros.apk
+          echo "✅ APK文件已准备"
 
       # 7. 检出资源处理脚本仓库
       - name: Checkout Phigros_Resource1
@@ -113,18 +77,43 @@ jobs:
         with:
           python-version: "3.10"
 
-      # 10. 清理旧的输出文件
+      # 10. 安装Python依赖（如果有）
+      - name: Install Python dependencies
+        working-directory: ./resource
+        run: |
+          if [ -f "requirements.txt" ]; then
+            pip install -r requirements.txt
+          fi
+
+      # 11. 清理旧的输出文件
       - name: Clean old outputs
         working-directory: resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
-      # 11. 运行资源提取脚本
+      # 12. 运行资源提取脚本
       - name: Run resources.py
         working-directory: resource
-        run: python resources.py
+        run: |
+          echo "正在运行资源提取脚本..."
+          python resources.py
+          echo "✅ 资源提取完成"
 
-      # 12. 检出构建产物仓库
+      # 13. 调试：检查生成的资源
+      - name: Check Generated Resources
+        working-directory: ./resource
+        run: |
+          echo "=== 生成的资源文件 ==="
+          du -sh avatar/ chart/ illustration/ music/ 2>/dev/null || echo "部分目录不存在"
+          echo "=== 各目录文件数 ==="
+          for dir in avatar chart illustration illustrationBlur illustrationLowRes music; do
+            if [ -d "$dir" ]; then
+              count=$(find "$dir" -type f | wc -l)
+              echo "$dir: $count 个文件"
+            fi
+          done
+
+      # 14. 检出构建产物仓库
       - name: Checkout build repo
         uses: actions/checkout@v4
         with:
@@ -133,7 +122,7 @@ jobs:
           ref: master
           path: build
 
-      # 13. 发布资源到构建仓库
+      # 15. 发布资源到构建仓库
       - name: Publish resources
         working-directory: ./resource
         run: |
@@ -146,7 +135,7 @@ jobs:
             music \
             ../build/
 
-      # 14. 提交并推送更改
+      # 16. 提交并推送更改
       - name: Commit & Push
         working-directory: ./build
         run: |
