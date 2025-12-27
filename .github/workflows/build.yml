@@ -1,4 +1,4 @@
-name: Build Phigros Resources (简化修复版)
+name: Build Phigros Resources (修复版)
 
 on:
   workflow_dispatch:
@@ -105,8 +105,50 @@ jobs:
         run: |
           rm -rf avatar chart illustration music
 
-      # 12. 核心分批处理（简化版）
-      - name: Run Resource Extraction (简化版)
+      # 12. 应用Chart修复补丁
+      - name: Apply Chart Fix Patch
+        working-directory: ./resource
+        run: |
+          echo "应用Chart修复补丁..."
+          # 备份原文件
+          cp resource.py resource.py.backup
+          
+          # 创建补丁脚本
+          cat > fix_chart.py << 'EOF'
+import re
+
+with open('resource.py', 'r', encoding='utf-8') as f:
+    content = f.read()
+
+# 查找Chart处理代码的位置
+# 先找到处理TextAsset的部分
+chart_pattern = r'(\s*if obj\.type\.name == "TextAsset".*?Chart.*?:)'
+
+def add_skip_logic(match):
+    original_line = match.group(1)
+    skip_code = '''
+            # 跳过可能卡住的文件
+            skip_files = ["TEmoji", "emoji", "Emoji", "Tutorial", "Debug", "Test"]
+            if any(skip_file in obj.path for skip_file in skip_files):
+                print(f"跳过可疑文件: {obj.path}")
+                continue'''
+    
+    return original_line + skip_code
+
+new_content = re.sub(chart_pattern, add_skip_logic, content, flags=re.DOTALL)
+
+with open('resource.py', 'w', encoding='utf-8') as f:
+    f.write(new_content)
+
+print("✅ Chart修复补丁已应用")
+print("将在处理Chart时跳过可疑文件")
+EOF
+
+          python3 fix_chart.py
+          rm -f fix_chart.py
+
+      # 13. 核心分批处理
+      - name: Run Resource Extraction
         working-directory: ./resource
         run: |
           echo "开始核心资源分批处理..."
@@ -138,52 +180,17 @@ jobs:
             sed -i "s/^\(avatar\|Chart\|illustration\|music\) = .*$/\\1 = False/" config.ini 2>/dev/null
             sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini 2>/dev/null
             
-            # === 特殊处理Chart类型：添加跳过问题文件的补丁 ===
-            if [ "$CURRENT_TYPE" = "Chart" ]; then
-              echo "📊 Chart特殊处理：跳过问题文件"
-              
-              # 创建临时修复的resource.py
-              python3 << 'EOF'
-          import re
-          
-          with open('resource.py', 'r', encoding='utf-8') as f:
-              content = f.read()
-          
-          # 添加跳过逻辑到Chart处理部分
-          skip_pattern = r'(for obj in env\.objects:(?:\n.*)*?if obj\.type\.name == "TextAsset".*Chart.*)'
-          
-          def add_skip_logic(match):
-              original = match.group(1)
-              enhanced = '''for obj in env.objects:
-        if obj.type.name == "TextAsset" and "Chart" in obj.path:
-            # 跳过可能卡住的文件
-            skip_files = ["TEmoji", "emoji", "Emoji", "Tutorial", "Debug", "Test"]
-            if any(skip_file in obj.path for skip_file in skip_files):
-                print(f"跳过可疑文件: {obj.path}")
-                continue
-'''
-              return enhanced
-          
-          new_content = re.sub(skip_pattern, add_skip_logic, content, flags=re.DOTALL)
-          
-          with open('resource.py', 'w', encoding='utf-8') as f:
-              f.write(new_content)
-          
-          print("✅ 已添加Chart文件跳过逻辑")
-          EOF
-            fi
-            
             # 运行提取
             echo "启动提取进程..."
-            timeout 1200 python resource.py Phigros.apk 2>&1 | tail -100
+            
+            if [ "$CURRENT_TYPE" = "Chart" ]; then
+              echo "📊 Chart处理（已应用跳过补丁）"
+              timeout 1800 python resource.py Phigros.apk 2>&1 | tail -100
+            else
+              timeout 900 python resource.py Phigros.apk 2>&1 | tail -50
+            fi
             
             EXIT_CODE=${PIPESTATUS[0]}
-            
-            # 恢复原版resource.py（如果是Chart）
-            if [ "$CURRENT_TYPE" = "Chart" ] && [ -f "resource.py.backup" ]; then
-              cp resource.py.backup resource.py
-              echo "✅ 恢复原版resource.py"
-            fi
             
             if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
               echo "❌ $CURRENT_TYPE 超时"
@@ -212,9 +219,10 @@ jobs:
           # 恢复配置
           [ -f "config.ini.backup" ] && mv config.ini.backup config.ini
           
-          # 备份resource.py（如果需要）
-          if [ ! -f "resource.py.backup" ]; then
-            cp resource.py resource.py.backup
+          # 恢复原版resource.py
+          if [ -f "resource.py.backup" ]; then
+            cp resource.py.backup resource.py
+            echo "✅ 恢复原版resource.py"
           fi
           
           # 最终报告
@@ -232,7 +240,7 @@ jobs:
             exit 1
           fi
 
-      # 13. 验证生成资源
+      # 14. 验证生成资源
       - name: Verify Generated Resources
         working-directory: ./resource
         run: |
@@ -250,7 +258,7 @@ jobs:
           done
           echo "总计: $TOTAL_COUNT 个资源文件"
 
-      # 14. 检出发布仓库
+      # 15. 检出发布仓库
       - name: Checkout Build Repository
         uses: actions/checkout@v4
         with:
@@ -259,7 +267,7 @@ jobs:
           ref: master
           path: build
 
-      # 15. 发布资源
+      # 16. 发布资源
       - name: Publish Resources
         working-directory: ./resource
         run: |
@@ -273,7 +281,7 @@ jobs:
           done
           echo "✅ 资源发布完成"
 
-      # 16. 提交更改
+      # 17. 提交更改
       - name: Commit Changes
         working-directory: ./build
         run: |
@@ -288,7 +296,7 @@ jobs:
             echo "✅ 变更已提交"
           fi
 
-      # 17. 最终状态报告
+      # 18. 最终状态报告
       - name: Final Status Report
         run: |
           echo "=== 工作流执行完成 ==="
