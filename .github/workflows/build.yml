@@ -20,8 +20,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y p7zip-full
 
       - name: Extract & Prepare APK
+        working-directory: ./history  # 【核心修复】指定此步骤在history目录下运行
         run: |
-          cd history
           shopt -s nullglob
           for f in *.7z.001; do
             echo "Extracting $f"
@@ -51,12 +51,12 @@ jobs:
           python-version: "3.10"
 
       - name: Clean old outputs
-        working-directory: resource
+        working-directory: ./resource
         run: |
           rm -rf avatar chart illustration illustrationBlur illustrationLowRes music
 
       - name: Run resources.py
-        working-directory: resource
+        working-directory: ./resource
         run: python resources.py
 
       - name: Checkout build repo
@@ -68,19 +68,21 @@ jobs:
           path: build
 
       - name: Publish resources
+        working-directory: ./resource  # 明确在此目录工作，使rsync源路径更直观
         run: |
           rsync -av --delete \
-            resource/avatar \
-            resource/chart \
-            resource/illustration \
-            resource/illustrationBlur \
-            resource/illustrationLowRes \
-            resource/music \
-            build/
+            avatar \
+            chart \
+            illustration \
+            illustrationBlur \
+            illustrationLowRes \
+            music \
+            ../build/  # 目标路径改为上一级目录的build文件夹
 
       - name: Commit & Push
-        working-directory: build
+        working-directory: ./build
         run: |
+          pwd  # 调试用：确认当前目录
           git config user.name "github-actions[bot]"
           git config user.email "github-actions@users.noreply.github.com"
           git add .
