@@ -7,8 +7,8 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
-    timeout-minutes: 45  # 设置总超时时间
+    runs-on: ubuntu-24.04-large
+    timeout-minutes: 100  # 设置总超时时间
 
     steps:
       # 1. 创建历史目录
