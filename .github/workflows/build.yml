@@ -1,4 +1,4 @@
-name: Build Phigros Resources (最终优化版)
+name: Build Phigros Resources (最终修复版)
 
 on:
   workflow_dispatch:
@@ -8,7 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       # 1. 创建历史目录
@@ -114,25 +114,25 @@ jobs:
           # 仅清理需要的目录
           rm -rf avatar chart illustration music
 
-      # 12. 核心分批处理（排除不需要的类型）
-      - name: Run Resource Extraction (核心类型)
+      # 12. 核心分批处理（带智能监控和修复）
+      - name: Run Resource Extraction (智能监控版)
         working-directory: ./resource
         run: |
           echo "开始核心资源分批处理..."
           echo "总开始时间: $(date)"
           
-          # 核心处理类型（排除不需要的IllustrationBlur/IllustrationLowRes）
+          # 核心处理类型
           CORE_TYPES=("illustration" "Chart" "music")
           [ -f "info/tmp.tsv" ] && CORE_TYPES=("avatar" "${CORE_TYPES[@]}")
           
           echo "将处理核心类型: ${CORE_TYPES[*]}"
-          echo "跳过类型: IllustrationBlur, IllustrationLowRes"
           
           # 备份原始配置
           [ -f "config.ini" ] && cp config.ini config.ini.backup
           
           SUCCESS_TYPES=""
           FAILED_TYPES=""
+          SKIPPED_TYPES=""
           
           for CURRENT_TYPE in "${CORE_TYPES[@]}"; do
             echo ""
@@ -142,38 +142,204 @@ jobs:
             # 跳过条件检查
             if [ "$CURRENT_TYPE" = "avatar" ] && [ ! -f "info/tmp.tsv" ]; then
               echo "⚠️ 跳过avatar（缺少tmp.tsv）"
-              FAILED_TYPES="$FAILED_TYPES(跳过:avatar)"
+              SKIPPED_TYPES="$SKIPPED_TYPES avatar"
               continue
             fi
             
-            # 修改配置：确保所有类型为False，当前类型为True
-            # 保留IllustrationBlur和IllustrationLowRes的设置项但设为False
-            sed -i "s/^\(avatar\|Chart\|illustrationBlur\|illustrationLowRes\|illustration\|music\) = .*$/\\1 = False/" config.ini 2>/dev/null
+            # 修改配置
+            sed -i "s/^\(avatar\|Chart\|illustration\|music\) = .*$/\\1 = False/" config.ini 2>/dev/null
             sed -i "s/^$CURRENT_TYPE = .*$/$CURRENT_TYPE = True/" config.ini 2>/dev/null
             
             echo "配置状态:"
             grep -E "^(avatar|Chart|illustration|music)" config.ini 2>/dev/null || echo "使用默认配置"
             
-            # 运行提取（15分钟超时）
-            echo "启动提取进程（超时:15分钟）..."
-            timeout 900 python resource.py Phigros.apk 2>&1 | tail -50
-            
-            EXIT_CODE=${PIPESTATUS[0]}
-            
-            if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
-              echo "❌ $CURRENT_TYPE 超时或被终止"
-              FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
-            elif [ $EXIT_CODE -eq 0 ]; then
-              echo "✅ $CURRENT_TYPE 成功"
-              SUCCESS_TYPES="$SUCCESS_TYPES $CURRENT_TYPE"
+            # === 特殊处理Chart类型 ===
+            if [ "$CURRENT_TYPE" = "Chart" ]; then
+              echo "📊 Chart特殊处理模式启动"
+              
+              # 1. 预扫描APK，了解Chart文件数量
+              echo "🔍 预扫描APK中的Chart文件..."
+              python3 << 'EOF'
+          import UnityPy
+          import os
+          
+          print("正在预扫描APK...")
+          try:
+              env = UnityPy.load('Phigros.apk')
+              chart_files = []
+              other_files = []
+              
+              for obj in env.objects:
+                  if obj.type.name == "TextAsset" and "Chart" in obj.path:
+                      chart_files.append(obj.path)
+                  elif obj.type.name == "TextAsset":
+                      other_files.append(obj.path)
+              
+              print(f"📈 扫描完成:")
+              print(f"  - 找到 {len(chart_files)} 个Chart文件")
+              print(f"  - 找到 {len(other_files)} 个其他TextAsset文件")
+              
+              # 列出前10个Chart文件
+              print("\n📋 前10个Chart文件:")
+              for i, path in enumerate(chart_files[:10]):
+                  print(f"  {i+1}. {path}")
+              
+              # 检查是否有可疑文件
+              suspicious = ["TEmoji", "emoji", "Emoji", "Tutorial", "Test", "Debug"]
+              for path in chart_files:
+                  if any(s in path for s in suspicious):
+                      print(f"⚠️  发现可疑Chart文件: {path}")
+              
+          except Exception as e:
+              print(f"预扫描失败: {e}")
+          EOF
+              
+              # 2. 创建监控脚本
+              cat > monitor_chart.sh << 'EOF'
+          #!/bin/bash
+          echo "🎯 Chart处理监控器启动"
+          echo "监控进程PID: $$"
+          
+          # 设置最长运行时间：20分钟
+          MAX_TIME=1200
+          START_TIME=$(date +%s)
+          
+          # 监控输出目录增长
+          LAST_COUNT=0
+          STUCK_COUNT=0
+          MAX_STUCK=3  # 连续3次无增长视为卡住
+          
+          while true; do
+              # 检查是否超时
+              CURRENT_TIME=$(date +%s)
+              ELAPSED=$((CURRENT_TIME - START_TIME))
+              
+              if [ $ELAPSED -gt $MAX_TIME ]; then
+                  echo "⏰ 监控超时（超过 ${MAX_TIME}秒）"
+                  return 1
+              fi
+              
+              # 检查主进程是否还在运行
+              if ! ps -p $1 > /dev/null 2>&1; then
+                  echo "✅ 主进程已结束"
+                  return 0
+              fi
+              
+              # 监控输出文件数量
+              if [ -d "chart" ]; then
+                  CURRENT_COUNT=$(find chart -type f 2>/dev/null | wc -l)
+                  echo "📊 进度: $CURRENT_COUNT 个文件（已运行 ${ELAPSED}秒）"
+                  
+                  # 检查是否卡住
+                  if [ $CURRENT_COUNT -eq $LAST_COUNT ]; then
+                      STUCK_COUNT=$((STUCK_COUNT + 1))
+                      echo "⚠️  文件数量未增长 ($STUCK_COUNT/$MAX_STUCK)"
+                      
+                      if [ $STUCK_COUNT -ge $MAX_STUCK ]; then
+                          echo "🚨 检测到卡住！可能遇到问题文件"
+                          echo "将尝试跳过当前文件并继续..."
+                          
+                          # 向进程发送CONT信号（尝试恢复）
+                          kill -CONT $1 2>/dev/null
+                          sleep 5
+                          
+                          # 如果仍然卡住，发送USR1信号（自定义信号）
+                          kill -USR1 $1 2>/dev/null
+                          sleep 10
+                      fi
+                  else
+                      STUCK_COUNT=0
+                      LAST_COUNT=$CURRENT_COUNT
+                  fi
+              else
+                  echo "📁 chart目录尚未创建"
+              fi
+              
+              sleep 30  # 每30秒检查一次
+          done
+          EOF
+              
+              chmod +x monitor_chart.sh
+              
+              # 3. 运行Chart提取（带监控）
+              echo "启动Chart提取进程（带监控）..."
+              LOG_FILE="chart_extraction_$(date +%s).log"
+              
+              # 后台运行主进程
+              timeout 1800 python resource.py Phigros.apk > "$LOG_FILE" 2>&1 &
+              MAIN_PID=$!
+              
+              # 后台运行监控器
+              ./monitor_chart.sh $MAIN_PID &
+              MONITOR_PID=$!
+              
+              # 等待主进程结束
+              wait $MAIN_PID
+              MAIN_EXIT=$?
+              
+              # 停止监控器
+              kill $MONITOR_PID 2>/dev/null
+              
+              # 分析结果
+              echo "=== Chart处理结果 ==="
+              tail -50 "$LOG_FILE"
+              
+              if [ $MAIN_EXIT -eq 0 ]; then
+                  echo "✅ Chart处理成功完成"
+                  SUCCESS_TYPES="$SUCCESS_TYPES Chart"
+              elif [ $MAIN_EXIT -eq 124 ] || [ $MAIN_EXIT -eq 137 ]; then
+                  echo "❌ Chart处理超时"
+                  
+                  # 尝试抢救已有文件
+                  if [ -d "chart" ] && [ -n "$(ls -A chart 2>/dev/null)" ]; then
+                      COUNT=$(find chart -type f | wc -l)
+                      echo "⚠️  但成功提取了 $COUNT 个Chart文件，部分成功"
+                      SUCCESS_TYPES="$SUCCESS_TYPES Chart(部分)"
+                  else
+                      FAILED_TYPES="$FAILED_TYPES Chart(超时)"
+                  fi
+              else
+                  echo "❌ Chart处理失败（代码: $MAIN_EXIT）"
+                  
+                  # 检查是否有部分输出
+                  if [ -d "chart" ] && [ -n "$(ls -A chart 2>/dev/null)" ]; then
+                      COUNT=$(find chart -type f | wc -l)
+                      echo "⚠️  部分成功: 提取了 $COUNT 个Chart文件"
+                      SUCCESS_TYPES="$SUCCESS_TYPES Chart(部分)"
+                  else
+                      FAILED_TYPES="$FAILED_TYPES Chart(失败)"
+                  fi
+              fi
+              
+              # 清理监控脚本
+              rm -f monitor_chart.sh "$LOG_FILE"
+              
             else
-              echo "❌ $CURRENT_TYPE 失败（代码:$EXIT_CODE）"
-              FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
+              # 其他类型的标准处理
+              echo "启动提取进程（超时:900秒）..."
+              timeout 900 python resource.py Phigros.apk 2>&1 | tail -50
+              
+              EXIT_CODE=${PIPESTATUS[0]}
+              
+              if [ $EXIT_CODE -eq 124 ] || [ $EXIT_CODE -eq 137 ]; then
+                  echo "❌ $CURRENT_TYPE 超时或被终止"
+                  FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
+              elif [ $EXIT_CODE -eq 0 ]; then
+                  echo "✅ $CURRENT_TYPE 成功"
+                  SUCCESS_TYPES="$SUCCESS_TYPES $CURRENT_TYPE"
+              else
+                  echo "❌ $CURRENT_TYPE 失败（代码:$EXIT_CODE）"
+                  FAILED_TYPES="$FAILED_TYPES $CURRENT_TYPE"
+              fi
             fi
             
             # 清理和恢复
             python3 -c "import gc; gc.collect()"
-            sleep 2
+            sleep 3
+            
+            # 检查内存使用
+            echo "内存状态:"
+            free -h
             
             echo "结束时间: $(date)"
           done
@@ -185,13 +351,27 @@ jobs:
           echo ""
           echo "======= 处理完成 ======="
           echo "✅ 成功: $SUCCESS_TYPES"
-          [ -n "$FAILED_TYPES" ] && echo "❌ 失败/跳过: $FAILED_TYPES"
+          [ -n "$SKIPPED_TYPES" ] && echo "➡️  跳过: $SKIPPED_TYPES"
+          [ -n "$FAILED_TYPES" ] && echo "❌ 失败: $FAILED_TYPES"
           echo "总时间: $(date)"
           
+          # 统计最终文件数量
+          echo ""
+          echo "📊 最终文件统计:"
+          for dir in avatar chart illustration music; do
+              if [ -d "$dir" ] && [ -n "$(ls -A $dir 2>/dev/null)" ]; then
+                  COUNT=$(find "$dir" -type f 2>/dev/null | wc -l)
+                  SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
+                  echo "  $dir: $COUNT 文件 ($SIZE)"
+              else
+                  echo "  $dir: 无文件"
+              fi
+          done
+          
           # 如果所有类型都失败，则工作流失败
-          if [ -z "$SUCCESS_TYPES" ]; then
-            echo "❌ 所有核心类型处理均失败"
-            exit 1
+          if [ -z "$SUCCESS_TYPES" ] && [ -n "$FAILED_TYPES" ]; then
+              echo "❌ 所有核心类型处理均失败"
+              exit 1
           fi
 
       # 13. 验证生成资源
@@ -269,3 +449,6 @@ jobs:
           echo "运行器: $(uname -a)"
           echo "磁盘状态:"
           df -h | grep -E "Filesystem|/dev/root"
+          echo "内存状态:"
+          free -h
+          echo "工作流状态: ${{ job.status }}"
