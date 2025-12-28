@@ -1,29 +1,29 @@
-name: Update Phigros Download Pages
+name: Update Phigros Categorized Pages
 
 on:
   workflow_run:
-    workflows: ["Phigros Full Resources Final"] # 当你的主 Action 完成时自动触发
-    types:
-      - completed
-  workflow_dispatch: # 也支持手动触发
+    workflows: ["Phigros Full Resources Final"]
+    types: [completed]
+  workflow_dispatch:
 
 jobs:
   deploy-pages:
     runs-on: ubuntu-latest
-    # 只有当主 Action 运行成功时才自动执行（如果是手动触发也允许）
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     
     steps:
-      - name: 1. 检出资源仓库 (husbvt/Phigros_Resource_Build)
+      - name: 1. 检出资源库
         uses: actions/checkout@v4
         with:
           repository: husbvt/Phigros_Resource_Build
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 2. 生成 index.html
+      - name: 2. 生成分类索引网页
         run: |
           BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
+          
+          # 网页头部
           cat > index.html <<EOF
           <!DOCTYPE html>
           <html lang="zh-CN">
@@ -32,58 +32,70 @@ jobs:
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>Phigros 资源下载站</title>
               <style>
-                  body { font-family: -apple-system, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; line-height: 1.6; }
-                  .container { max-width: 800px; margin: auto; }
-                  h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
-                  input#search { width: 100%; padding: 12px; margin-bottom: 20px; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 6px; box-sizing: border-box; }
-                  .item { background: #161b22; border: 1px solid #30363d; padding: 12px; margin-bottom: 8px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; transition: 0.2s; }
-                  .item:hover { border-color: #8b949e; }
-                  .tag { font-size: 0.75em; font-weight: bold; background: #238636; color: #fff; padding: 2px 8px; border-radius: 10px; margin-right: 10px; text-transform: uppercase; }
-                  .btn { color: #58a6ff; text-decoration: none; border: 1px solid #30363d; padding: 5px 12px; border-radius: 6px; font-size: 0.9em; }
-                  .btn:hover { background: #30363d; }
-                  .info { display: flex; align-items: center; }
+                  body { font-family: -apple-system, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+                  .container { max-width: 900px; margin: auto; }
+                  h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
+                  input#search { width: 100%; padding: 12px; margin: 20px 0; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 8px; box-sizing: border-box; }
+                  
+                  /* 歌曲卡片样式 */
+                  .song-card { background: #161b22; border: 1px solid #30363d; margin-bottom: 20px; border-radius: 8px; overflow: hidden; }
+                  .song-header { background: #21262d; padding: 12px 15px; font-weight: bold; border-bottom: 1px solid #30363d; color: #58a6ff; font-size: 1.1em; }
+                  .song-body { padding: 15px; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+                  
+                  .resource-group { display: flex; flex-direction: column; gap: 8px; }
+                  .resource-item { display: flex; justify-content: space-between; align-items: center; background: #0d1117; padding: 8px 12px; border-radius: 4px; border: 1px solid #30363d; font-size: 0.9em; }
+                  .tag { font-size: 0.7em; background: #238636; color: white; padding: 2px 6px; border-radius: 4px; margin-right: 8px; text-transform: uppercase; }
+                  .btn { color: #58a6ff; text-decoration: none; font-weight: bold; }
+                  .btn:hover { text-decoration: underline; }
+                  
+                  .preview-img { width: 100%; max-height: 150px; object-fit: cover; border-radius: 4px; border: 1px solid #30363d; cursor: pointer; }
               </style>
           </head>
           <body>
               <div class="container">
-                  <h1>Phigros 资源库</h1>
-                  <input type="text" id="search" placeholder="搜索资源名或类型 (如: music, chart)..." onkeyup="filter()">
+                  <h1>Phigros 资源库 (歌曲聚合)</h1>
+                  <input type="text" id="search" placeholder="输入歌曲 ID 或关键词搜索..." onkeyup="filter()">
                   <div id="list">
           EOF
 
-          # 扫描资源库中的文件并写入 HTML
-          # 仅扫描特定的四个文件夹
-          find build_repo/{music,chart,illustration,avatar} -type f 2>/dev/null | sort | while read -r file; do
-              RELATIVE_PATH=${file#build_repo/}
-              TYPE=$(echo "$RELATIVE_PATH" | cut -d'/' -f1)
-              NAME=$(basename "$file")
-              echo "<div class='item'><div class='info'><span class='tag'>$TYPE</span><span>$NAME</span></div><a class='btn' href='$BASE_URL/$RELATIVE_PATH' target='_blank'>下载</a></div>" >> index.html
+          # 核心逻辑：按歌曲名（文件名核心部分）分类
+          # 我们先获取所有歌曲的唯一 ID (基于 music 文件夹)
+          cd build_repo
+          ls music | sed 's/\.[^.]*$//' | sort -u | while read -r song_id; do
+              if [ -z "$song_id" ]; then continue; fi
+              
+              echo "<div class='song-card' data-name='$song_id'>" >> ../index.html
+              echo "<div class='song-header'>$song_id</div>" >> ../index.html
+              echo "<div class='song-body'>" >> ../index.html
+              
+              # 1. 查找对应的曲绘预览
+              ILLUS=$(find illustration -name "${song_id}*" -type f | head -n 1)
+              if [ ! -z "$ILLUS" ]; then
+                  echo "<div class='resource-group'><img class='preview-img' src='$BASE_URL/$ILLUS' onclick='window.open(this.src)'></div>" >> ../index.html
+              fi
+              
+              echo "<div class='resource-group'>" >> ../index.html
+              
+              # 2. 查找音乐文件
+              find music -name "${song_id}*" -type f | while read -r f; do
+                  echo "<div class='resource-item'><span><span class='tag'>Music</span>$(basename "$f")</span><a class='btn' href='$BASE_URL/$f' target='_blank'>下载</a></div>" >> ../../index.html
+              done
+              
+              # 3. 查找所有难度的谱面
+              find chart -name "${song_id}*" -type f | while read -r f; do
+                  echo "<div class='resource-item'><span><span class='tag'>Chart</span>$(basename "$f")</span><a class='btn' href='$BASE_URL/$f' target='_blank'>下载</a></div>" >> ../../index.html
+              done
+              
+              echo "</div></div></div>" >> ../index.html
           done
+          cd ..
 
+          # 网页尾部
           cat >> index.html <<EOF
                   </div>
               </div>
               <script>
                   function filter() {
                       let q = document.getElementById('search').value.toLowerCase();
-                      document.querySelectorAll('.item').forEach(i => {
-                          i.style.display = i.innerText.toLowerCase().includes(q) ? "" : "none";
-                      });
-                  }
-              </script>
-          </body>
-          </html>
-          EOF
-
-      - name: 3. 检出网页仓库并部署
-        env:
-          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
-        run: |
-          git clone "https://${AUTH_TOKEN}@github.com/husbvt/phigros.github.io.git" pages_repo
-          cp index.html pages_repo/
-          cd pages_repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html
-          git commit -m "chore: auto-update index [skip ci]" || echo "No changes"
-          git push origin master --force
+                      document.querySelectorAll('.song-card').forEach(c => {
+                          c.style.
