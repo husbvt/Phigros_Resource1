@@ -31,7 +31,7 @@ jobs:
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>Zephyr的下载站</title>
-              <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jzip.min.js"></script>
+              <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
               <style>
                   :root { --blue: #58a6ff; --bg: #0d1117; --card: #161b22; }
                   body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: #c9d1d9; margin: 0; padding: 15px; }
@@ -66,6 +66,12 @@ jobs:
                   .select-all { margin: 10px 0 15px 0; font-size: 0.9em; color: #58a6ff; cursor: pointer; user-select: none; }
                   .select-all:hover { text-decoration: underline; }
                   .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+                  .difficulty { font-size: 0.7em; padding: 1px 4px; border-radius: 3px; background: #30363d; color: #8b949e; margin-left: 5px; }
+                  .difficulty-ez { background: #238636; color: #fff; }
+                  .difficulty-hd { background: #da3633; color: #fff; }
+                  .difficulty-in { background: #8957e5; color: #fff; }
+                  .difficulty-at { background: #f0883e; color: #fff; }
+                  .difficulty-sp { background: #9e6a03; color: #fff; }
                   @media (max-width: 600px) {
                       .song-header { flex-direction: column; align-items: flex-start; }
                       .preview-area { flex: 0 0 180px; }
@@ -80,45 +86,141 @@ jobs:
                   <div id="list">
           EOF
 
-          # 2. 生成歌曲卡片
+          # 2. 生成歌曲卡片 - 修复嵌套目录结构问题
           cd build_repo
-          # 获取所有歌曲ID - 改进的查找方法
-          SONG_IDS=$(find music chart illustration -type f 2>/dev/null | xargs -I {} basename {} | sed 's/\.[^.]*$//' | sort -u)
-
+          echo "进入build_repo目录，当前路径: $(pwd)"
+          
+          # 获取所有歌曲ID - 从目录名获取
+          echo "=== 从chart目录获取歌曲ID ==="
+          if [ -d "chart" ]; then
+              # 获取所有chart子目录作为歌曲ID
+              SONG_IDS=$(find chart -type d -mindepth 1 -maxdepth 1 | sed 's|chart/||' | sort)
+              echo "从chart目录找到的歌曲ID:"
+              echo "$SONG_IDS" | head -20
+          else
+              SONG_IDS=""
+              echo "chart目录不存在"
+          fi
+          
+          # 如果没有从chart找到，尝试从music目录获取
+          if [ -z "$SONG_IDS" ] && [ -d "music" ]; then
+              echo "=== 从music目录获取歌曲ID ==="
+              SONG_IDS=$(find music -type f -name "*.mp3" -o -name "*.ogg" -o -name "*.wav" 2>/dev/null | \
+                        xargs -I {} basename {} | \
+                        sed 's/\.[^.]*$//; s/-[0-9]*$//' | \
+                        sort -u)
+              echo "从music目录找到的歌曲ID:"
+              echo "$SONG_IDS" | head -20
+          fi
+          
+          if [ -z "$SONG_IDS" ]; then
+              echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> ../index.html
+              cd ..
+              cat >> index.html <<EOF
+                  </div>
+              </div>
+              <script>console.log('没有找到任何资源文件');</script>
+          </body>
+          </html>
+          EOF
+              exit 0
+          fi
+          
+          # 为每个歌曲ID生成卡片
+          SONG_COUNT=0
           for id in $SONG_IDS; do
-              [ -z "$id" ] && continue
+              # 清理ID
+              id_clean=$(echo "$id" | sed 's/\.[0-9]*$//')  # 移除结尾的.0版本号
+              [ -z "$id_clean" ] && continue
               
-              # 统计文件数量
-              AUDIO_COUNT=$(find music -name "${id}.*" -type f 2>/dev/null | wc -l)
-              CHART_COUNT=$(find chart -name "${id}.*" -type f 2>/dev/null | wc -l)
-              ILL_COUNT=$(find illustration -name "${id}.*" -type f 2>/dev/null | wc -l)
-              TOTAL_FILES=$((AUDIO_COUNT + CHART_COUNT + ILL_COUNT))
+              echo "处理歌曲ID: '$id_clean' (原ID: '$id')"
+              
+              # 查找所有相关文件
+              
+              # 1. 曲绘文件 - 查找多种命名模式
+              ILL_FILES=""
+              # 尝试带版本号的查找
+              ILL_FILES=$(find illustration -type f \( \
+                  -name "${id}.*" -o \
+                  -name "${id_clean}.*" -o \
+                  -name "${id}*.png" -o \
+                  -name "${id_clean}*.png" -o \
+                  -name "${id}*.jpg" -o \
+                  -name "${id_clean}*.jpg" -o \
+                  -name "${id}*.jpeg" -o \
+                  -name "${id_clean}*.jpeg" \
+              \) 2>/dev/null)
+              
+              # 如果没找到，尝试更宽松的匹配
+              if [ -z "$ILL_FILES" ]; then
+                  ILL_FILES=$(find illustration -type f -name "*${id_clean}*" 2>/dev/null)
+              fi
+              
+              ILL_FILES_COUNT=$(echo "$ILL_FILES" | grep -v "^$" | wc -l)
+              
+              # 2. 音频文件 - 查找多种命名模式
+              AUDIO_FILES=""
+              AUDIO_FILES=$(find music -type f \( \
+                  -name "${id}.*" -o \
+                  -name "${id_clean}.*" -o \
+                  -name "${id}*.mp3" -o \
+                  -name "${id_clean}*.mp3" -o \
+                  -name "${id}*.ogg" -o \
+                  -name "${id_clean}*.ogg" -o \
+                  -name "${id}*.wav" -o \
+                  -name "${id_clean}*.wav" \
+              \) 2>/dev/null)
+              
+              AUDIO_FILES_COUNT=$(echo "$AUDIO_FILES" | grep -v "^$" | wc -l)
+              
+              # 3. 谱面文件 - 关键修复：查找嵌套目录中的谱面
+              CHART_FILES=""
+              # 先检查是否有以歌曲ID命名的目录
+              if [ -d "chart/${id}" ]; then
+                  # 查找该目录下的所有谱面文件
+                  CHART_FILES=$(find "chart/${id}" -type f -name "*.json" 2>/dev/null)
+              else
+                  # 如果没有对应目录，尝试查找其他可能的位置
+                  CHART_FILES=$(find chart -type f -name "*.json" -path "*${id_clean}*" 2>/dev/null)
+              fi
+              
+              CHART_FILES_COUNT=$(echo "$CHART_FILES" | grep -v "^$" | wc -l)
+              
+              TOTAL_FILES=$((ILL_FILES_COUNT + AUDIO_FILES_COUNT + CHART_FILES_COUNT))
               
               if [ $TOTAL_FILES -eq 0 ]; then
+                  echo "  -> 没有找到文件，跳过"
                   continue
               fi
               
-              # 匹配曲绘
-              ILL=$(find illustration -name "${id}.*" -type f 2>/dev/null | head -n 1)
+              SONG_COUNT=$((SONG_COUNT + 1))
+              echo "  -> 找到 $TOTAL_FILES 个文件 (曲绘: $ILL_FILES_COUNT, 音频: $AUDIO_FILES_COUNT, 谱面: $CHART_FILES_COUNT)"
+              if [ $CHART_FILES_COUNT -gt 0 ]; then
+                  echo "     谱面文件:"
+                  echo "$CHART_FILES" | while read f; do echo "       - $f"; done
+              fi
+              
+              # 选择第一个曲绘文件作为预览
+              ILL_PREVIEW=$(echo "$ILL_FILES" | head -n1)
               
               # 开始写入卡片
               {
-                echo "<div class='song-card' data-name='$id'>"
+                echo "<div class='song-card' data-name='$id_clean'>"
                 echo "<div class='song-header'>"
-                echo "<span>$id</span>"
+                echo "<span>$id_clean</span>"
                 echo "<div style='display: flex; align-items: center;'>"
-                echo "<span id='st-$id' class='status'>$TOTAL_FILES个文件</span>"
-                echo "<button class='btn-zip' onclick='pack(\"$id\")' title='下载选中的文件'>📦 打包下载</button>"
+                echo "<span id='st-$id_clean' class='status'>$TOTAL_FILES个文件</span>"
+                echo "<button class='btn-zip' onclick='pack(\"$id_clean\")' title='下载选中的文件'>📦 打包下载</button>"
                 echo "</div></div>"
                 echo "<div class='song-content'>"
                 
                 # 图片预览
                 echo "<div class='preview-area'>"
-                if [ ! -z "$ILL" ] && [ -f "$ILL" ]; then
-                    ILL_URL="${BASE_URL}/${ILL}"
+                if [ ! -z "$ILL_PREVIEW" ] && [ -f "$ILL_PREVIEW" ]; then
+                    ILL_URL="${BASE_URL}/${ILL_PREVIEW}"
                     # URL编码处理
-                    ILL_URL_ENC=$(echo "$ILL_URL" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g')
-                    echo "<img class='preview-img lazy' data-src='$ILL_URL_ENC' onclick='window.open(this.dataset.src)' alt='$id 曲绘' loading='lazy'>"
+                    ILL_URL_ENC=$(echo "$ILL_URL" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
+                    echo "<img class='preview-img lazy' data-src='$ILL_URL_ENC' onclick='window.open(this.dataset.src)' alt='$id_clean 曲绘' loading='lazy'>"
                 else
                     echo "<div style='height:140px;background:linear-gradient(135deg,#333,#555);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#8b949e;'>无预览</div>"
                 fi
@@ -126,41 +228,91 @@ jobs:
                 
                 # 资源列表
                 echo "<div class='resource-list'>"
-                echo "<div class='select-all' onclick='toggleAll(\"$id\")'>📋 全选/取消全选</div>"
-                echo "<div id='files-$id'>"
+                echo "<div class='select-all' onclick='toggleAll(\"$id_clean\")'>📋 全选/取消全选</div>"
+                echo "<div id='files-$id_clean'>"
                 
-                # 曲绘文件
-                if [ ! -z "$ILL" ]; then
-                    ILL_URL="${BASE_URL}/${ILL}"
-                    ILL_URL_ENC=$(echo "$ILL_URL" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g')
-                    ILL_NAME=$(basename "$ILL")
-                    echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$ILL_URL_ENC' checked><span class='tag tag-ill'>曲绘</span><span class='file-name'>$ILL_NAME</span></label>"
+                # 显示曲绘文件
+                if [ $ILL_FILES_COUNT -gt 0 ]; then
+                    echo "$ILL_FILES" | while read -r f; do
+                        [ -z "$f" ] && continue
+                        if [ -f "$f" ]; then
+                            f_url="${BASE_URL}/${f}"
+                            f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
+                            f_name=$(basename "$f")
+                            echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' checked><span class='tag tag-ill'>曲绘</span><span class='file-name'>$f_name</span></label>"
+                        fi
+                    done
                 fi
                 
-                # 音频文件
-                find music -name "${id}.*" -type f 2>/dev/null | while read -r f; do
-                    f_url="${BASE_URL}/${f}"
-                    f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g')
-                    f_name=$(basename "$f")
-                    echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' checked><span class='tag tag-audio'>音频</span><span class='file-name'>$f_name</span></label>"
-                done
+                # 显示音频文件
+                if [ $AUDIO_FILES_COUNT -gt 0 ]; then
+                    echo "$AUDIO_FILES" | while read -r f; do
+                        [ -z "$f" ] && continue
+                        if [ -f "$f" ]; then
+                            f_url="${BASE_URL}/${f}"
+                            f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
+                            f_name=$(basename "$f")
+                            echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' checked><span class='tag tag-audio'>音频</span><span class='file-name'>$f_name</span></label>"
+                        fi
+                    done
+                fi
                 
-                # 谱面文件
-                find chart -name "${id}.*" -type f 2>/dev/null | while read -r f; do
-                    f_url="${BASE_URL}/${f}"
-                    f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g')
-                    f_name=$(basename "$f")
-                    echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' checked><span class='tag tag-chart'>谱面</span><span class='file-name'>$f_name</span></label>"
-                done
+                # 显示谱面文件 - 关键修复：正确显示嵌套目录中的谱面
+                if [ $CHART_FILES_COUNT -gt 0 ]; then
+                    echo "$CHART_FILES" | while read -r f; do
+                        [ -z "$f" ] && continue
+                        if [ -f "$f" ]; then
+                            f_url="${BASE_URL}/${f}"
+                            f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
+                            f_name=$(basename "$f")
+                            
+                            # 根据文件名添加难度标识
+                            diff_class=""
+                            case "$f_name" in
+                                *EZ*|*ez*|*Ez*|*EASY*|*Easy*)
+                                    diff_class="difficulty-ez" ;;
+                                *HD*|*hd*|*Hd*|*HARD*|*Hard*)
+                                    diff_class="difficulty-hd" ;;
+                                *IN*|*in*|*In*|*INSANE*|*Insane*)
+                                    diff_class="difficulty-in" ;;
+                                *AT*|*at*|*At*|*ANOTHER*|*Another*)
+                                    diff_class="difficulty-at" ;;
+                                *SP*|*sp*|*Sp*|*SPECIAL*|*Special*)
+                                    diff_class="difficulty-sp" ;;
+                            esac
+                            
+                            # 提取难度简称显示
+                            diff_text=""
+                            case "$f_name" in
+                                *EZ*|*ez*|*Ez*) diff_text="EZ" ;;
+                                *HD*|*hd*|*Hd*) diff_text="HD" ;;
+                                *IN*|*in*|*In*) diff_text="IN" ;;
+                                *AT*|*at*|*At*) diff_text="AT" ;;
+                                *SP*|*sp*|*Sp*) diff_text="SP" ;;
+                            esac
+                            
+                            if [ ! -z "$diff_class" ]; then
+                                echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' checked><span class='tag tag-chart'>谱面</span><span class='file-name'>$f_name</span><span class='difficulty $diff_class'>$diff_text</span></label>"
+                            else
+                                echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' checked><span class='tag tag-chart'>谱面</span><span class='file-name'>$f_name</span></label>"
+                            fi
+                        fi
+                    done
+                else
+                    # 如果没有谱面文件，显示提示
+                    echo "<div style='color:#8b949e; font-size:0.9em; padding:5px;'>暂无谱面文件</div>"
+                fi
                 
                 echo "</div></div></div></div>"
               } >> ../index.html
           done
+          
           cd ..
 
-          # 检查是否有歌曲生成
-          if ! grep -q "song-card" index.html; then
-              echo "<div class='no-files'>暂无资源文件</div>" >> index.html
+          echo "总共生成 $SONG_COUNT 个歌曲卡片"
+          
+          if [ $SONG_COUNT -eq 0 ]; then
+              echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> index.html
           fi
 
           # 3. 写入JS脚本
@@ -174,7 +326,7 @@ jobs:
                   
                   // 页面加载完成后初始化
                   document.addEventListener('DOMContentLoaded', function() {
-                      console.log('Zephyr下载站已加载');
+                      console.log('Zephyr下载站已加载，共找到', document.querySelectorAll('.song-card').length, '个歌曲');
                       
                       // 初始化所有歌曲的下载状态
                       document.querySelectorAll('.song-card').forEach(card => {
@@ -190,6 +342,9 @@ jobs:
                       
                       // 复选框点击优化
                       initCheckboxes();
+                      
+                      // 初始化状态显示
+                      initStatus();
                   });
                   
                   function initLazyLoad() {
@@ -263,6 +418,13 @@ jobs:
                                   checkbox.dispatchEvent(new Event('change'));
                               }
                           });
+                      });
+                  }
+                  
+                  function initStatus() {
+                      document.querySelectorAll('.song-card').forEach(card => {
+                          const songId = card.dataset.name;
+                          updateStatus(songId);
                       });
                   }
                   
@@ -443,22 +605,12 @@ jobs:
                           }
                       }
                   });
-                  
-                  // 初始状态更新
-                  window.addEventListener('load', function() {
-                      document.querySelectorAll('.song-card').forEach(card => {
-                          const songId = card.dataset.name;
-                          updateStatus(songId);
-                      });
-                  });
               </script>
           </body>
           </html>
           EOF
 
-          echo "HTML文件生成完成，大小: $(wc -l < index.html) 行"
-          echo "预览HTML前5行:"
-          head -5 index.html
+          echo "HTML文件生成完成"
 
       - name: 3. 部署到GitHub Pages
         env:
@@ -483,14 +635,18 @@ jobs:
           if ! git diff --quiet index.html; then
               echo "检测到index.html有变化，正在提交..."
               git add index.html
-              git commit -m "Zephyr: 更新下载站 $(date '+%Y-%m-%d %H:%M:%S')"
+              git commit -m "Zephyr: 修复谱面嵌套目录结构问题 $(date '+%Y-%m-%d %H:%M:%S')"
               git push origin master
               echo "部署成功！"
+              
+              # 输出部署信息
+              echo "=== 部署完成 ==="
+              echo "访问地址: https://husbvt.github.io/phigros.github.io/"
           else
               echo "没有检测到变化，跳过提交。"
           fi
           
           # 清理
           cd ..
-          rm -rf pages_repo
+          rm -rf pages_repo build_repo
           echo "部署流程完成。"
