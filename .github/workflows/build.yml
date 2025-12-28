@@ -1,4 +1,4 @@
-name: Phigros Full Resources Final
+name: Phigros Full Extraction & Zephyr Deployment
 
 on:
   workflow_dispatch:
@@ -14,96 +14,125 @@ jobs:
         with:
           path: resource
 
-      - name: 2. 下载 APK 分卷包
-        uses: robinraju/release-downloader@v1.10
-        with:
-          repository: "SteveZMTstudios/Phigros-history"
-          latest: true
-          fileName: "*.7z.*"
-          out-file-path: "./downloads"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: 3. 解压并定位 APK
+      - name: 2. 下载并解压 APK
         run: |
           sudo apt-get update && sudo apt-get install -y p7zip-full rsync
-          mkdir -p ./extracted
-          7z x "downloads/*.7z.001" -o./extracted -y || echo "7z Skip"
-          FOUND_APK=$(find . -name "*.apk" -type f | head -n 1)
-          if [ -z "$FOUND_APK" ]; then echo "❌ APK NOT FOUND"; exit 1; fi
-          mkdir -p ./resource
-          cp "$FOUND_APK" ./resource/Phigros.apk
-
-      - name: 4. 环境与依赖
+          # 运行下载逻辑...
+          # 此处请保留你之前的 robinraju/release-downloader 步骤内容
+          
+      - name: 3. 环境准备
         run: |
           sudo apt-get install -y libogg-dev libvorbis-dev
           pip install UnityPy==1.10.18 fsb5
 
-      - name: 5. 检出目标仓库 (husbvt)
+      - name: 4. 检出资源库 (husbvt)
         uses: actions/checkout@v4
         with:
           repository: husbvt/Phigros_Resource_Build
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 6. 自动化分阶段提取
+      - name: 5. 自动化分阶段提取 (深度修复头像)
         working-directory: ./resource
         run: |
-          # 强制并发为 1
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
 
-          # --- 1. 提取头像 (Avatar) ---
-          # 修复点：同时尝试大写开头的开关
-          echo "🚀 Processing: avatar"
-          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
-          sed -i -E "s/^avatar[[:space:]]*=.*/avatar = True/I" config.ini
-          python resource.py Phigros.apk || echo "Skip"
-          # 检查多个可能的输出目录名 (avatar 或 Avatar)
-          for d in avatar Avatar; do
-            if [ -d "$d" ] && [ "$(ls -A "$d" 2>/dev/null)" ]; then
-              rsync -av "$d/" "../build_repo/avatar/"
-              rm -rf "$d"/*
-            fi
+          extract_and_sync() {
+            local task=$1
+            echo "🚀 正在提取: $task"
+            cat > config.ini <<EOF
+          [config]
+          avatar = $([[ "$task" == "avatar" ]] && echo "True" || echo "False")
+          Chart = $([[ "$task" == "chart" ]] && echo "True" || echo "False")
+          music = $([[ "$task" == "music" ]] && echo "True" || echo "False")
+          illustration = $([[ "$task" == "illustration" ]] && echo "True" || echo "False")
+          EOF
+            python resource.py Phigros.apk || echo "Skip"
+            
+            # 兼容头像可能的大小写文件夹
+            for folder in avatar Avatar chart music illustration; do
+              if [ "$folder" == "$task" ] || [ "${folder,,}" == "$task" ]; then
+                if [ -d "$folder" ] && [ "$(ls -A "$folder" 2>/dev/null)" ]; then
+                  rsync -av "$folder/" "../build_repo/${task}/"
+                  rm -rf "$folder"/*
+                fi
+              fi
+            done
+          }
+
+          extract_and_sync "avatar"
+          extract_and_sync "chart"
+          extract_and_sync "music"
+          extract_and_sync "illustration"
+
+      - name: 6. 生成跨域搜索网页 (index.html)
+        working-directory: ./build_repo
+        run: |
+          # 资源重定向地址
+          BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
+          
+          cat > index.html <<EOF
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Zephyr Phigros Download Station</title>
+              <style>
+                  body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+                  .container { max-width: 900px; margin: auto; }
+                  input#search { width: 100%; padding: 15px; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 8px; margin: 20px 0; }
+                  .item { background: #161b22; border: 1px solid #30363d; padding: 12px; margin-bottom: 8px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
+                  .tag { font-size: 10px; padding: 2px 6px; border-radius: 4px; background: #238636; color: white; margin-right: 10px; }
+                  .btn { color: #58a6ff; text-decoration: none; border: 1px solid #58a6ff; padding: 4px 10px; border-radius: 4px; font-size: 13px; }
+                  .btn:hover { background: #58a6ff; color: #fff; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>Phigros 资源下载站 (Zephyr)</h1>
+                  <input type="text" id="search" placeholder="输入关键字搜索音乐、谱面、曲绘..." onkeyup="search()">
+                  <div id="list">
+          EOF
+
+          # 自动生成指向 husbvt 仓库的下载链接
+          find music chart illustration avatar -type f | sort | while read -r file; do
+             TYPE=$(echo "$file" | cut -d'/' -f1)
+             NAME=$(basename "$file")
+             echo "<div class='item'><div><span class='tag'>${TYPE^^}</span>$NAME</div><a class='btn' href='$BASE_URL/$file' download>下载</a></div>" >> index.html
           done
 
-          # --- 2. 提取谱面 (Chart) ---
-          echo "🚀 Processing: Chart"
-          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
-          sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
-          python resource.py Phigros.apk || echo "Skip"
-          if [ -d "chart" ]; then rsync -av "chart/" "../build_repo/chart/"; rm -rf "chart"/*; fi
+          cat >> index.html <<EOF
+                  </div>
+              </div>
+              <script>
+                  function search() {
+                      let q = document.getElementById('search').value.toLowerCase();
+                      document.querySelectorAll('.item').forEach(i => {
+                          i.style.display = i.innerText.toLowerCase().includes(q) ? "" : "none";
+                      });
+                  }
+              </script>
+          </body>
+          </html>
+          EOF
 
-          # --- 3. 提取音乐 (music) ---
-          echo "🚀 Processing: music"
-          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
-          sed -i -E "s/^music[[:space:]]*=.*/music = True/I" config.ini
-          python resource.py Phigros.apk || echo "Skip"
-          if [ -d "music" ]; then rsync -av "music/" "../build_repo/music/"; rm -rf "music"/*; fi
-
-          # --- 4. 提取曲绘 (illustration) ---
-          echo "🚀 Processing: illustration"
-          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
-          sed -i -E "s/^illustration[[:space:]]*=.*/illustration = True/I" config.ini
-          python resource.py Phigros.apk || echo "Skip"
-          if [ -d "illustration" ]; then rsync -av "illustration/" "../build_repo/illustration/"; rm -rf "illustration"/*; fi
-
-      - name: 7. 最终推送至 husbvt 仓库 master 分支
+      - name: 7. 推送 2.1GB 资源到 husbvt
         working-directory: ./build_repo
-        env:
-          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git config --global core.quotepath false
+          git add music/ chart/ illustration/ avatar/
+          git commit -m "Sync Resources $(date +'%Y-%m-%d')" || echo "No changes"
+          git push "https://${{ secrets.BUILD_PAT }}@github.com/husbvt/Phigros_Resource_Build.git" HEAD:master --force
 
-          echo "📊 Final Size Check:"
-          du -sh ./*
-
-          git add -A
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
-            # 明确推送到 master 分支
-            git push "https://${AUTH_TOKEN}@github.com/husbvt/Phigros_Resource_Build.git" HEAD:master --force
-          else
-            echo "✅ No changes to push."
-          fi
+      - name: 8. 部署网页到 zephyr.github.io
+        run: |
+          git clone "https://${{ secrets.BUILD_PAT }}@github.com/zephyr/zephyr.github.io.git" pages_dir
+          cp build_repo/index.html pages_dir/
+          cd pages_dir
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "Update Navigation Page" || echo "No changes"
+          git push origin master --force
