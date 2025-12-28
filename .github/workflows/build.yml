@@ -1,4 +1,4 @@
-name: Phigros Sync to Dedicated Page
+name: Phigros Resources To Dedicated Page
 
 on:
   workflow_dispatch:
@@ -14,52 +14,71 @@ jobs:
         with:
           path: resource
 
-      - name: 2. 下载并解压 APK
-        run: |
-          sudo apt-get update && sudo apt-get install -y p7zip-full rsync libogg-dev libvorbis-dev
-          pip install UnityPy==1.10.18 fsb5
-          # 请确保此处 Phigros.apk 已下载到 ./resource/ 目录下
-
-      - name: 3. 检出资源库 (husbvt/Phigros_Resource_Build)
-        uses: actions/checkout@v4
+      - name: 2. 下载 APK 分卷包
+        uses: robinraju/release-downloader@v1.10
         with:
-          repository: husbvt/Phigros_Resource_Build
-          token: ${{ secrets.BUILD_PAT }}
-          path: build_repo
+          repository: "SteveZMTstudios/Phigros-history"
+          latest: true
+          fileName: "*.7z.*"
+          out-file-path: "./downloads"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 4. 自动化分阶段提取 (修复 Config 报错)
+      - name: 3. 解压并定位 APK
+        run: |
+          sudo apt-get update && sudo apt-get install -y p7zip-full rsync
+          mkdir -p ./extracted
+          7z x "downloads/*.7z.001" -o./extracted -y || echo "7z Skip"
+          FOUND_APK=$(find . -name "*.apk" -type f | head -n 1)
+          if [ -z "$FOUND_APK" ]; then echo "❌ APK NOT FOUND"; exit 1; fi
+          mkdir -p ./resource
+          cp "$FOUND_APK" ./resource/Phigros.apk
+
+      - name: 4. 环境与依赖
+        run: |
+          sudo apt-get install -y libogg-dev libvorbis-dev
+          pip install UnityPy==1.10.18 fsb5
+
+      - name: 5. 检出目标仓库 (资源库与网页库)
+        run: |
+          # 检出资源库（存放 2GB 文件的库）
+          git clone https://x-access-token:${{ secrets.BUILD_PAT }}@github.com/husbvt/Phigros_Resource_Build.git build_repo
+          # 检出网页库（phigros.github.io）
+          git clone https://x-access-token:${{ secrets.BUILD_PAT }}@github.com/husbvt/phigros.github.io.git pages_repo
+
+      - name: 6. 自动化分阶段提取 (仅 谱面/音乐/曲绘)
         working-directory: ./resource
         run: |
+          # 优化：直接生成对应的 config.ini 节，解决 KeyError: 'TYPES'
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
-          
-          run_extract() {
+
+          extract_task() {
+            local task=$1
+            echo "🚀 Processing: $task"
             cat > config.ini <<EOF
           [TYPES]
-          avatar = $([[ "$1" == "avatar" ]] && echo "True" || echo "False")
-          Chart = $([[ "$1" == "chart" ]] && echo "True" || echo "False")
-          music = $([[ "$1" == "music" ]] && echo "True" || echo "False")
-          illustration = $([[ "$1" == "illustration" ]] && echo "True" || echo "False")
+          avatar = False
+          Chart = $([[ "$task" == "chart" ]] && echo "True" || echo "False")
+          music = $([[ "$task" == "music" ]] && echo "True" || echo "False")
+          illustration = $([[ "$task" == "illustration" ]] && echo "True" || echo "False")
           illustrationBlur = False
           illustrationLowRes = False
           EOF
-            python resource.py Phigros.apk || echo "Skip $1"
+            python resource.py Phigros.apk || echo "Skip $task"
+            if [ -d "$task" ]; then
+              rsync -av "$task/" "../build_repo/$task/"
+              rm -rf "$task"/*
+            fi
           }
 
-          for task in avatar chart music illustration; do
-            run_extract "$task"
-            # 兼容处理提取后的文件夹名
-            for d in $task ${task^}; do
-              if [ -d "$d" ]; then
-                rsync -av "$d/" "../build_repo/$task/"
-                rm -rf "$d"/*
-              fi
-            done
-          done
+          extract_task "chart"
+          extract_task "music"
+          extract_task "illustration"
 
-      - name: 5. 生成索引网页 (index.html)
+      - name: 7. 生成跨仓库下载站网页
         working-directory: ./build_repo
         run: |
-          # 资源重定向地址：指向 2.1GB 资源所在的 Pages 服务
+          # 资源重定向地址：指向 Phigros_Resource_Build 开启 Pages 后的地址
           BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
           
           cat > index.html <<EOF
@@ -68,36 +87,38 @@ jobs:
           <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Phigros Download Center</title>
+              <title>Phigros 资源下载站</title>
               <style>
-                  body { font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+                  body { font-family: sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
                   .container { max-width: 900px; margin: auto; }
                   h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
                   input#search { width: 100%; padding: 12px; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 8px; margin: 20px 0; box-sizing: border-box; }
                   .item { background: #161b22; border: 1px solid #30363d; padding: 12px; margin-bottom: 8px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
-                  .tag { font-size: 10px; padding: 3px 8px; border-radius: 12px; background: #238636; color: white; margin-right: 12px; }
+                  .tag { font-size: 10px; padding: 3px 8px; border-radius: 4px; background: #238636; color: white; margin-right: 12px; }
                   .btn { color: #58a6ff; text-decoration: none; font-weight: bold; border: 1px solid #30363d; padding: 6px 12px; border-radius: 6px; }
                   .btn:hover { background: #30363d; }
+                  .footer { text-align: center; color: #8b949e; margin-top: 30px; font-size: 0.8em; }
               </style>
           </head>
           <body>
               <div class="container">
                   <h1>Phigros 资源库 (专用下载站)</h1>
-                  <input type="text" id="search" placeholder="搜索歌曲、谱面或曲绘..." onkeyup="search()">
+                  <input type="text" id="search" placeholder="输入关键字搜索歌曲、谱面..." onkeyup="doSearch()">
                   <div id="list">
           EOF
 
-          # 自动生成超链接（指向资源库仓库的 Pages 路径）
-          find music chart illustration avatar -type f | sort | while read -r f; do
+          # 自动扫描三个主文件夹并生成列表
+          find chart music illustration -type f | sort | while read -r f; do
              T=$(echo "$f" | cut -d'/' -f1 | tr 'a-z' 'A-Z')
              echo "<div class='item'><div><span class='tag'>$T</span>$(basename "$f")</div><a class='btn' href='$BASE_URL/$f' target='_blank'>下载</a></div>" >> index.html
           done
 
           cat >> index.html <<EOF
                   </div>
+                  <div class="footer">最后更新: $(date +'%Y-%m-%d %H:%M')</div>
               </div>
               <script>
-                  function search() {
+                  function doSearch() {
                       let q = document.getElementById('search').value.toLowerCase();
                       document.querySelectorAll('.item').forEach(i => {
                           i.style.display = i.innerText.toLowerCase().includes(q) ? "" : "none";
@@ -108,22 +129,25 @@ jobs:
           </html>
           EOF
 
-      - name: 6. 推送 2.1GB 资源到 Phigros_Resource_Build
+      - name: 8. 同步资源到 Phigros_Resource_Build
         working-directory: ./build_repo
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add music/ chart/ illustration/ avatar/
-          git commit -m "Update Assets" || echo "No changes"
-          git push "https://${{ secrets.BUILD_PAT }}@github.com/husbvt/Phigros_Resource_Build.git" HEAD:master --force
+          git add chart/ music/ illustration/
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto Update Assets"
+            git push origin master --force
+          fi
 
-      - name: 7. 部署 index.html 到 phigros.github.io
+      - name: 9. 部署网页到 phigros.github.io
         run: |
-          git clone --depth 1 "https://${{ secrets.BUILD_PAT }}@github.com/husbvt/phigros.github.io.git" pages_repo
           cp build_repo/index.html pages_repo/
           cd pages_repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html
-          git commit -m "Update Download Station UI" || echo "No changes"
-          git push origin master --force
+          if ! git diff --cached --quiet; then
+            git commit -m "Update Index UI"
+            git push origin master --force
+          fi
