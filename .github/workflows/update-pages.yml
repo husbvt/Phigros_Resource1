@@ -23,8 +23,8 @@ jobs:
           # 使用JSDelivr CDN
           BASE_URL="https://phigros-res.l1quid.dpdns.org"
           
-          # 1. 初始化 HTML 头部
-          cat > index.html <<EOF
+          # 1. 初始化 HTML 头部 - 修改文件名为 home.html
+          cat > home.html <<EOF
           <!DOCTYPE html>
           <html lang="zh-CN">
           <head>
@@ -112,9 +112,9 @@ jobs:
           fi
           
           if [ -z "$SONG_IDS" ]; then
-              echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> ../index.html
+              echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> ../home.html
               cd ..
-              cat >> index.html <<EOF
+              cat >> home.html <<EOF
                   </div>
               </div>
               <script>console.log('没有找到任何资源文件');</script>
@@ -248,7 +248,7 @@ jobs:
                 echo "</div>"
                 echo "<div class='progress-bar' id='progress-$id_clean'><div class='progress-fill' id='progress-fill-$id_clean'></div></div>"
                 echo "</div></div></div>"
-              } >> ../index.html
+              } >> ../home.html
           done
           
           cd ..
@@ -256,11 +256,11 @@ jobs:
           echo "总共生成 $SONG_COUNT 个歌曲卡片"
           
           if [ $SONG_COUNT -eq 0 ]; then
-              echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> index.html
+              echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> home.html
           fi
 
           # 3. 写入JS脚本 - 简化请求避免预检
-          cat >> index.html <<EOF
+          cat >> home.html <<EOF
                   </div>
               </div>
               
@@ -724,7 +724,7 @@ jobs:
           </html>
           EOF
 
-          echo "HTML文件生成完成"
+          echo "home.html文件生成完成"
 
       - name: 3. 部署到GitHub Pages
         env:
@@ -733,21 +733,23 @@ jobs:
           echo "正在部署到GitHub Pages..."
           
           git clone "https://${AUTH_TOKEN}@github.com/husbvt/phigros.github.io.git" pages_repo
-          cp index.html pages_repo/
+          # 修改：复制home.html而不是index.html
+          cp home.html pages_repo/
           
           cd pages_repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          if ! git diff --quiet index.html; then
-              echo "检测到index.html有变化，正在提交..."
-              git add index.html
-              git commit -m "Zephyr: 简化请求避免CORS预检问题 $(date '+%Y-%m-%d %H:%M:%S')"
+          if ! git diff --quiet home.html; then
+              echo "检测到home.html有变化，正在提交..."
+              git add home.html
+              git commit -m "Zephyr: 更新下载站为home.html $(date '+%Y-%m-%d %H:%M:%S')"
               git push origin master
               echo "部署成功！"
               
               echo "=== 部署完成 ==="
-              echo "GitHub Pages地址: https://husbvt.github.io/phigros.github.io/"
+              echo "下载站地址: https://husbvt.github.io/phigros.github.io/home.html"
+              echo "验证页跳转地址: home.html"
               echo ""
               echo "如果下载仍然失败："
               echo "1. 在浏览器控制台输入 testConnection() 测试连接"
@@ -758,5 +760,5 @@ jobs:
           fi
           
           cd ..
-          rm -rf pages_repo build_repo
+          rm -rf pages_repo build_repo home.html
           echo "部署流程完成。"
