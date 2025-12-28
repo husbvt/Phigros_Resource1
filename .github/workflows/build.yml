@@ -1,20 +1,119 @@
 name: Phigros Full Resources Final
 
 on:
+  # 1. 手动触发按钮（保留）
   workflow_dispatch:
+  
+  # 2. 定时触发：每三周的周一上午10点执行
+  schedule:
+    - cron: '0 10 */21 * *'  # 每21天执行一次，约等于三周
 
 jobs:
-  build:
+  check-and-build:
     runs-on: ubuntu-latest
     timeout-minutes: 180
-
+    
     steps:
-      - name: 1. 检出脚本仓库
+      # 新增：显示触发信息
+      - name: 0. 显示触发信息
+        run: |
+          echo "🎯 工作流触发方式: ${{ github.event_name }}"
+          echo "📅 当前时间: $(date)"
+          echo "⏰ 事件类型: ${{ github.event.action || 'schedule/manual' }}"
+          
+      - name: 1. 获取上游发布信息
+        id: get-release
+        run: |
+          echo "🔍 正在检查上游仓库更新..."
+          
+          # 使用GitHub API获取最新发布信息
+          API_URL="https://api.github.com/repos/SteveZMTstudios/Phigros-history/releases/latest"
+          
+          # 添加重试机制
+          for i in {1..3}; do
+            RESPONSE=$(curl -s \
+              -H "Accept: application/vnd.github.v3+json" \
+              -H "User-Agent: Phigros-Resource-Updater" \
+              "$API_URL") || true
+              
+            if [ -n "$RESPONSE" ] && [ "$RESPONSE" != "null" ]; then
+              break
+            fi
+            echo "⚠️ 第 $i 次尝试失败，10秒后重试..."
+            sleep 10
+          done
+          
+          # 解析JSON响应
+          TAG_NAME=$(echo "$RESPONSE" | jq -r '.tag_name // empty' 2>/dev/null || echo "")
+          PUBLISHED_AT=$(echo "$RESPONSE" | jq -r '.published_at // empty' 2>/dev/null || echo "")
+          RELEASE_ID=$(echo "$RESPONSE" | jq -r '.id // empty' 2>/dev/null || echo "")
+          
+          if [ -z "$TAG_NAME" ] || [ "$TAG_NAME" = "null" ]; then
+            echo "❌ 无法获取上游仓库版本信息"
+            echo "::set-output name=has_update::false"
+            exit 0  # 非致命错误，优雅退出
+          fi
+          
+          echo "✅ 上游最新版本: $TAG_NAME"
+          echo "📅 发布时间: $PUBLISHED_AT"
+          echo "🆔 发布ID: $RELEASE_ID"
+          
+          # 存储版本信息供后续步骤使用
+          echo "::set-output name=tag_name::$TAG_NAME"
+          echo "::set-output name=published_at::$PUBLISHED_AT"
+          echo "::set-output name=release_id::$RELEASE_ID"
+          echo "::set-output name=has_update::true"
+      
+      - name: 2. 判断是否需要更新
+        id: should-update
+        run: |
+          # 如果是手动触发，总是执行
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "🔧 手动触发，强制执行更新"
+            echo "::set-output name=should_build::true"
+            echo "::set-output name=reason::manual_trigger"
+            exit 0
+          fi
+          
+          # 定时触发时，检查版本是否变化
+          CURRENT_TAG="${{ steps.get-release.outputs.tag_name }}"
+          
+          # 尝试从GitHub缓存/文件中读取上次处理的版本
+          # 方法1：使用GitHub Actions缓存
+          echo "尝试读取上次处理的版本..."
+          LAST_TAG=""
+          
+          # 创建一个简单的版本记录文件
+          if [ -f "last_version.txt" ]; then
+            LAST_TAG=$(cat last_version.txt)
+            echo "📖 读取到上次版本: $LAST_TAG"
+          else
+            echo "📖 无版本记录文件，首次运行"
+          fi
+          
+          # 比较版本
+          if [ -z "$LAST_TAG" ] || [ "$CURRENT_TAG" != "$LAST_TAG" ]; then
+            echo "🔄 检测到版本变化: $LAST_TAG -> $CURRENT_TAG"
+            echo "::set-output name=should_build::true"
+            echo "::set-output name=reason::new_version"
+            
+            # 保存当前版本
+            echo "$CURRENT_TAG" > last_version.txt
+            echo "💾 已保存当前版本: $CURRENT_TAG"
+          else
+            echo "✅ 版本未变化，跳过构建: $CURRENT_TAG"
+            echo "::set-output name=should_build::false"
+            echo "::set-output name=reason::no_change"
+          fi
+      
+      - name: 3. 检出脚本仓库（条件性）
+        if: steps.should-update.outputs.should_build == 'true'
         uses: actions/checkout@v4
         with:
           path: resource
 
-      - name: 2. 下载 APK 分卷包
+      - name: 4. 下载 APK 分卷包（条件性）
+        if: steps.should-update.outputs.should_build == 'true'
         uses: robinraju/release-downloader@v1.10
         with:
           repository: "SteveZMTstudios/Phigros-history"
@@ -24,7 +123,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 3. 解压并定位 APK
+      - name: 5. 解压并定位 APK（条件性）
+        if: steps.should-update.outputs.should_build == 'true'
         run: |
           sudo apt-get update && sudo apt-get install -y p7zip-full rsync
           mkdir -p ./extracted
@@ -34,26 +134,32 @@ jobs:
           mkdir -p ./resource
           cp "$FOUND_APK" ./resource/Phigros.apk
 
-      - name: 4. 环境与依赖
+      - name: 6. 环境与依赖（条件性）
+        if: steps.should-update.outputs.should_build == 'true'
         run: |
           sudo apt-get install -y libogg-dev libvorbis-dev
           pip install UnityPy==1.10.18 fsb5
 
-      - name: 5. 检出目标仓库 (husbvt)
+      - name: 7. 检出目标仓库 (husbvt)（条件性）
+        if: steps.should-update.outputs.should_build == 'true'
         uses: actions/checkout@v4
         with:
           repository: husbvt/Phigros_Resource_Build
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 6. 自动化分阶段提取
+      - name: 8. 自动化分阶段提取（条件性）
+        if: steps.should-update.outputs.should_build == 'true'
         working-directory: ./resource
         run: |
+          # 显示触发原因
+          echo "🚀 开始提取资源 - 触发原因: ${{ steps.should-update.outputs.reason }}"
+          echo "🏷️  目标版本: ${{ steps.get-release.outputs.tag_name || '手动触发' }}"
+          
           # 强制并发为 1
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
 
           # --- 1. 提取头像 (Avatar) ---
-          # 修复点：同时尝试大写开头的开关
           echo "🚀 Processing: avatar"
           sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
           sed -i -E "s/^avatar[[:space:]]*=.*/avatar = True/I" config.ini
@@ -87,7 +193,8 @@ jobs:
           python resource.py Phigros.apk || echo "Skip"
           if [ -d "illustration" ]; then rsync -av "illustration/" "../build_repo/illustration/"; rm -rf "illustration"/*; fi
 
-      - name: 7. 最终推送至 husbvt 仓库 master 分支
+      - name: 9. 最终推送至 husbvt 仓库（条件性）
+        if: steps.should-update.outputs.should_build == 'true'
         working-directory: ./build_repo
         env:
           AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
@@ -99,11 +206,33 @@ jobs:
           echo "📊 Final Size Check:"
           du -sh ./*
 
+          # 构建提交信息
+          COMMIT_MSG="Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
+          if [ -n "${{ steps.get-release.outputs.tag_name }}" ]; then
+            COMMIT_MSG="$COMMIT_MSG - Version: ${{ steps.get-release.outputs.tag_name }}"
+          fi
+          COMMIT_MSG="$COMMIT_MSG [Trigger: ${{ steps.should-update.outputs.reason }}]"
+
           git add -A
           if ! git diff --cached --quiet; then
-            git commit -m "Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
+            git commit -m "$COMMIT_MSG"
             # 明确推送到 master 分支
             git push "https://${AUTH_TOKEN}@github.com/husbvt/Phigros_Resource_Build.git" HEAD:master --force
+            echo "✅ 资源已成功推送"
           else
-            echo "✅ No changes to push."
+            echo "✅ 无变化可推送"
           fi
+      
+      - name: 10. 完成通知
+        run: |
+          echo "========================================"
+          echo "🏁 工作流执行完成"
+          echo "触发方式: ${{ github.event_name }}"
+          echo "构建执行: ${{ steps.should-update.outputs.should_build || 'false' }}"
+          echo "执行原因: ${{ steps.should-update.outputs.reason || 'N/A' }}"
+          if [ "${{ steps.should-update.outputs.should_build }}" = "true" ]; then
+            echo "✅ 资源更新流程已执行"
+          else
+            echo "⏭️  资源更新已跳过（无新版本）"
+          fi
+          echo "========================================"
