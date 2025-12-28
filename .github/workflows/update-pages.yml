@@ -9,7 +9,6 @@ on:
 jobs:
   deploy-pages:
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     
     steps:
       - name: 1. 检出资源库
@@ -19,11 +18,13 @@ jobs:
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 2. 生成 Zephyr 下载站 (本地自动打包版)
+      - name: 2. 生成 Zephyr 专属下载网页
         run: |
+          # 定义资源的基础 URL
           CDN_URL="https://cdn.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master"
           BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
           
+          # 1. 写入 HTML 头部和样式
           cat > index.html <<EOF
           <!DOCTYPE html>
           <html lang="zh-CN">
@@ -33,140 +34,168 @@ jobs:
               <title>Zephyr的Phigros下载站</title>
               <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
               <style>
-                  body { font-family: sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
-                  .container { max-width: 1000px; margin: auto; }
-                  h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
-                  .search-box { width: 100%; padding: 12px; margin: 20px 0; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 8px; }
+                  :root { --blue: #58a6ff; --bg: #0d1117; --card: #161b22; }
+                  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: #c9d1d9; margin: 0; padding: 10px; }
+                  .container { max-width: 900px; margin: auto; padding: 10px; }
+                  h1 { color: var(--blue); text-align: center; margin: 30px 0; font-size: 2em; letter-spacing: 1px; }
+                  .search-box { width: 100%; padding: 15px; background: var(--card); border: 1px solid #30363d; color: #fff; border-radius: 12px; margin-bottom: 25px; box-sizing: border-box; font-size: 1rem; }
                   
-                  .song-card { background: #161b22; border: 1px solid #30363d; margin-bottom: 30px; border-radius: 12px; overflow: hidden; }
-                  .song-header { background: #21262d; padding: 15px; font-weight: bold; border-bottom: 1px solid #30363d; color: #58a6ff; display: flex; justify-content: space-between; align-items: center; }
+                  .song-card { background: var(--card); border: 1px solid #30363d; border-radius: 16px; margin-bottom: 30px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+                  .song-header { background: #21262d; padding: 15px 20px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+                  .song-title { font-weight: bold; color: var(--blue); font-size: 1.2em; }
                   
-                  .song-content { display: flex; padding: 20px; gap: 20px; flex-wrap: wrap; }
-                  .preview-area { flex: 0 0 260px; }
-                  .preview-img { width: 100%; border-radius: 8px; border: 1px solid #30363d; cursor: pointer; }
+                  .song-content { display: flex; flex-direction: column; padding: 20px; gap: 20px; }
+                  @media (min-width: 650px) { .song-content { flex-direction: row; } }
                   
-                  .resource-list { flex: 1; min-width: 300px; }
-                  .file-row { display: flex; align-items: center; background: #0d1117; padding: 8px 12px; margin-bottom: 5px; border-radius: 6px; border: 1px solid #30363d; font-size: 0.9em; }
-                  .tag { font-size: 0.7em; padding: 2px 6px; border-radius: 4px; color: white; margin-right: 10px; font-weight: bold; }
+                  .preview-area { flex: 0 0 280px; }
+                  .preview-img { width: 100%; border-radius: 10px; border: 1px solid #30363d; cursor: pointer; display: block; background: #000; transition: opacity 0.5s; opacity: 0; }
+                  .preview-img.loaded { opacity: 1; }
+                  
+                  .resource-list { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+                  .file-item { display: flex; align-items: center; background: #0d1117; padding: 12px; border-radius: 8px; border: 1px solid #30363d; font-size: 0.9em; }
+                  .checkbox { margin-right: 15px; width: 20px; height: 20px; cursor: pointer; }
+                  
+                  .tag { font-size: 0.75em; padding: 2px 8px; border-radius: 4px; color: #fff; margin-right: 10px; font-weight: bold; min-width: 50px; text-align: center; }
                   .tag-audio { background: #1f6feb; }
                   .tag-chart { background: #238636; }
                   
-                  .btn-zip { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+                  .btn-zip { background: #238636; color: white; border: none; padding: 12px 24px; border-radius: 10px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 0.9em; }
+                  .btn-zip:hover { background: #2ea043; }
                   .btn-zip:disabled { background: #30363d; cursor: not-allowed; }
-                  .status-text { font-size: 0.8em; color: #8b949e; margin-right: 10px; }
+                  .status { font-size: 0.8em; color: #8b949e; margin-right: 10px; }
               </style>
           </head>
           <body>
               <div class="container">
                   <h1>Zephyr的Phigros下载站</h1>
-                  <input type="text" id="search" class="search-box" placeholder="搜索歌曲..." onkeyup="filter()">
+                  <input type="text" id="search" class="search-box" placeholder="搜索歌曲、ID或文件名...">
                   <div id="list">
           EOF
 
+          # 2. 遍历资源库并生成卡片内容
           cd build_repo
-          # 扫描所有文件夹汇总 ID
+          # 汇总 ID (从三个文件夹里提取)
           ALL_IDS=$(ls music chart illustration 2>/dev/null | sed 's/\.[^.]*$//' | sort -u)
-          
-          for song_id in $ALL_IDS; do
-              [ -z "$song_id" ] && continue
-              
-              # 关键修复：递归搜索该 ID 对应的所有文件
-              MUSIC_FILES=$(find music -name "${song_id}*" -type f)
-              CHART_FILES=$(find chart -name "${song_id}*" -type f)
-              ILLUS_FILE=$(find illustration -name "${song_id}*" -type f | head -n 1)
 
-              echo "<div class='song-card' data-name='$song_id'>" >> ../index.html
-              echo "<div class='song-header'><span>$song_id</span>" >> ../index.html
-              echo "<div><span id='status-$song_id' class='status-text'></span>" >> ../index.html
-              echo "<button class='btn-zip' id='btn-$song_id' onclick='zipAndDownload(\"$song_id\")'>打包下载全部</button></div></div>" >> ../index.html
+          for id in $ALL_IDS; do
+              [ -z "$id" ] && continue
+              
+              # 匹配该 ID 下的所有文件 (使用 find 深度搜索)
+              MUSIC_FILES=$(find music -name "${id}*" -type f)
+              CHART_FILES=$(find chart -name "${id}*" -type f)
+              ILLUS_FILE=$(find illustration -name "${id}*" -type f | head -n 1)
+
+              # 开始生成卡片
+              echo "<div class='song-card' data-name='$id'>" >> ../index.html
+              echo "<div class='song-header'><span class='song-title'>$id</span>" >> ../index.html
+              echo "<div><span id='st-$id' class='status'></span><button class='btn-zip' onclick='packAndDownload(\"$id\")'>打包下载已选项目</button></div></div>" >> ../index.html
               
               echo "<div class='song-content'>" >> ../index.html
               
-              # 曲绘预览
+              # 曲绘部分 (CDN 加速)
               echo "<div class='preview-area'>" >> ../index.html
               if [ ! -z "$ILLUS_FILE" ]; then
                   echo "<img class='preview-img lazy' data-src='$CDN_URL/$ILLUS_FILE' onclick='window.open(this.src)'>" >> ../index.html
               else
-                  echo "<div style='height:150px; background:#333; border-radius:8px;'></div>" >> ../index.html
+                  echo "<div style='height:150px; background:#30363d; border-radius:10px; display:flex; align-items:center; justify-content:center; color:#8b949e;'>无预览图</div>" >> ../index.html
               fi
               echo "</div>" >> ../index.html
               
-              # 资源列表清单 (包含所有谱面)
-              echo "<div class='resource-list' id='files-$song_id'>" >> ../index.html
+              # 资源列表部分 (重要修复：确保写入到 ../index.html 而不是错误的路径)
+              echo "<div class='resource-list' id='files-$id'>" >> ../index.html
+              
+              # 写入音乐
               for f in $MUSIC_FILES; do
-                  echo "<div class='file-row' data-url='$BASE_URL/$f'><span class='tag tag-audio'>Audio</span>$(basename "$f")</div>" >> ../index.html
+                  echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$BASE_URL/$f' checked><span class='tag tag-audio'>Audio</span>$(basename "$f")</label>" >> ../../index.html
               done
+              
+              # 写入谱面 (修复：现在会循环显示所有找到的谱面)
               for f in $CHART_FILES; do
-                  # 谱面会在这里循环显示
-                  echo "<div class='file-row' data-url='$BASE_URL/$f'><span class='tag tag-chart'>Chart</span>$(basename "$f")</div>" >> ../index.html
+                  echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$BASE_URL/$f' checked><span class='tag tag-chart'>Chart</span>$(basename "$f")</label>" >> ../../index.html
               done
+              
               echo "</div></div></div>" >> ../index.html
           done
           cd ..
 
+          # 3. 写入 JS 逻辑
           cat >> index.html <<EOF
                   </div>
               </div>
               <script>
-                  // 懒加载
-                  const obs = new IntersectionObserver(es => es.forEach(e => {
-                      if(e.isIntersecting) { e.target.src = e.target.dataset.src; obs.unobserve(e.target); }
-                  }), {rootMargin:'200px'});
-                  document.querySelectorAll('.lazy').forEach(i => obs.observe(i));
+                  // 1. 懒加载逻辑
+                  const observer = new IntersectionObserver(entries => {
+                      entries.forEach(entry => {
+                          if (entry.isIntersecting) {
+                              const img = entry.target;
+                              img.src = img.dataset.src;
+                              img.onload = () => img.classList.add('loaded');
+                              observer.unobserve(img);
+                          }
+                      });
+                  }, { rootMargin: '300px' });
+                  document.querySelectorAll('.lazy').forEach(img => observer.observe(img));
 
-                  // 核心打包逻辑
-                  async function zipAndDownload(id) {
-                      const btn = document.getElementById('btn-' + id);
-                      const status = document.getElementById('status-' + id);
-                      const fileRows = document.querySelectorAll('#files-' + id + ' .file-row');
+                  // 2. 搜索逻辑
+                  document.getElementById('search').addEventListener('input', function(e) {
+                      const val = e.target.value.toLowerCase();
+                      document.querySelectorAll('.song-card').forEach(card => {
+                          card.style.display = card.getAttribute('data-name').toLowerCase().includes(val) ? "" : "none";
+                      });
+                  });
+
+                  // 3. 核心打包下载逻辑
+                  async function packAndDownload(id) {
+                      const btn = event.target;
+                      const status = document.getElementById('st-' + id);
+                      const checkboxes = document.querySelectorAll('#files-' + id + ' .checkbox:checked');
                       
+                      if (checkboxes.length === 0) {
+                          alert('请至少勾选一个文件进行下载');
+                          return;
+                      }
+
                       btn.disabled = true;
-                      status.innerText = "正在准备打包...";
-                      
                       const zip = new JSZip();
                       const folder = zip.folder(id);
 
                       try {
-                          for (let row of fileRows) {
-                              const url = row.dataset.url;
-                              const fileName = url.split('/').pop();
-                              status.innerText = "正在下载: " + fileName;
+                          for (const cb of checkboxes) {
+                              const fileUrl = cb.dataset.url;
+                              const fileName = fileUrl.split('/').pop();
+                              status.innerText = "正在获取: " + fileName;
                               
-                              const response = await fetch(url);
-                              if (!response.ok) throw new Error("下载失败");
+                              const response = await fetch(fileUrl);
+                              if (!response.ok) throw new Error("文件获取失败");
                               const blob = await response.blob();
                               folder.file(fileName, blob);
                           }
 
-                          status.innerText = "正在生成 ZIP...";
-                          const content = await zip.generateAsync({type: "blob"});
+                          status.innerText = "正在打包中...";
+                          const zipBlob = await zip.generateAsync({ type: "blob" });
                           
                           const link = document.createElement('a');
-                          link.href = URL.createObjectURL(content);
-                          link.download = id + "_resources.zip";
+                          link.href = URL.createObjectURL(zipBlob);
+                          link.download = id + "_Zephyr_Pack.zip";
                           link.click();
                           
-                          status.innerText = "完成！";
+                          status.innerText = "下载已开始";
                       } catch (err) {
                           alert("打包失败: " + err.message);
-                          status.innerText = "出错";
+                          status.innerText = "打包出错";
                       } finally {
-                          btn.disabled = false;
+                          setTimeout(() => {
+                              btn.disabled = false;
+                              status.innerText = "";
+                          }, 3000);
                       }
-                  }
-
-                  function filter() {
-                      let q = document.getElementById('search').value.toLowerCase();
-                      document.querySelectorAll('.song-card').forEach(c => {
-                          c.style.display = c.getAttribute('data-name').toLowerCase().includes(q) ? "" : "none";
-                      });
                   }
               </script>
           </body>
           </html>
           EOF
 
-      - name: 3. 部署
+      - name: 3. 部署到 Pages 仓库
         env:
           AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
         run: |
@@ -176,5 +205,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html
-          git commit -m "feat: Add local ZIP packaging for all song resources" || echo "No changes"
+          git commit -m "Update Zephyr Phigros Download Station - Local ZIP Pack" || echo "No changes"
           git push origin master --force
