@@ -1,29 +1,7 @@
-name: Update Phigros Categorized Pages
-
-on:
-  workflow_run:
-    workflows: ["Phigros Full Resources Final"]
-    types: [completed]
-  workflow_dispatch:
-
-jobs:
-  deploy-pages:
-    runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
-    
-    steps:
-      - name: 1. 检出资源库 (husbvt/Phigros_Resource_Build)
-        uses: actions/checkout@v4
-        with:
-          repository: husbvt/Phigros_Resource_Build
-          token: ${{ secrets.BUILD_PAT }}
-          path: build_repo
-
-      - name: 2. 核心逻辑：按歌曲 ID 聚合生成网页
+- name: 2. 核心逻辑：按歌曲 ID 聚合生成网页 (修复下载显示)
         run: |
           BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
           
-          # 网页头部和样式
           cat > index.html <<EOF
           <!DOCTYPE html>
           <html lang="zh-CN">
@@ -36,25 +14,18 @@ jobs:
                   .container { max-width: 1000px; margin: auto; }
                   h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
                   input#search { width: 100%; padding: 12px; margin: 20px 0; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 8px; box-sizing: border-box; }
-                  
-                  /* 歌曲聚合卡片 */
                   .song-card { background: #161b22; border: 1px solid #30363d; margin-bottom: 25px; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
                   .song-header { background: #21262d; padding: 15px; font-weight: bold; border-bottom: 1px solid #30363d; color: #58a6ff; font-size: 1.2em; }
-                  
                   .song-content { display: flex; padding: 15px; gap: 20px; flex-wrap: wrap; }
-                  
-                  /* 左侧曲绘预览 */
-                  .preview-area { flex: 0 0 250px; }
+                  .preview-area { flex: 0 0 250px; min-width: 250px; }
                   .preview-img { width: 100%; border-radius: 8px; border: 1px solid #30363d; box-shadow: 0 4px 10px rgba(0,0,0,0.3); }
-                  
-                  /* 右侧资源列表 */
                   .resource-list { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 300px; }
                   .file-item { display: flex; justify-content: space-between; align-items: center; background: #0d1117; padding: 10px 15px; border-radius: 6px; border: 1px solid #30363d; }
                   .tag { font-size: 0.7em; padding: 2px 8px; border-radius: 4px; color: white; margin-right: 10px; font-weight: bold; }
                   .tag-music { background: #1f6feb; }
                   .tag-chart { background: #238636; }
-                  .btn { color: #58a6ff; text-decoration: none; font-weight: bold; border: 1px solid #30363d; padding: 4px 12px; border-radius: 4px; font-size: 0.9em; }
-                  .btn:hover { background: #30363d; }
+                  .btn { color: #58a6ff; text-decoration: none; font-weight: bold; border: 1px solid #30363d; padding: 6px 14px; border-radius: 4px; font-size: 0.9em; background: #21262d; }
+                  .btn:hover { background: #30363d; border-color: #8b949e; }
               </style>
           </head>
           <body>
@@ -64,11 +35,9 @@ jobs:
                   <div id="list">
           EOF
 
-          # 开始分类处理
           cd build_repo
           
-          # 1. 提取所有唯一的歌曲 ID (以 music 文件夹里的文件名作为基准)
-          # 比如 A_Final_Dream.mp3 -> ID 为 A_Final_Dream
+          # 修改点：从 music 文件夹获取 ID，并递归搜索相关文件
           ls music 2>/dev/null | sed 's/\.[^.]*$//' | sort -u | while read -r song_id; do
               [ -z "$song_id" ] && continue
 
@@ -77,12 +46,11 @@ jobs:
               echo "<div class='song-content'>" >> ../index.html
               
               # --- 左侧：曲绘预览 ---
-              ILLUS=$(find illustration -maxdepth 1 -name "${song_id}*" -type f | head -n 1)
+              ILLUS=$(find illustration -name "${song_id}*" -type f | head -n 1)
               echo "<div class='preview-area'>" >> ../index.html
               if [ ! -z "$ILLUS" ]; then
                   echo "<img class='preview-img' src='$BASE_URL/$ILLUS' loading='lazy' onclick='window.open(this.src)'>" >> ../index.html
               else
-                  # 如果没找到图，放一个占位符
                   echo "<div style='width:100%;height:150px;background:#30363d;border-radius:8px;display:flex;align-items:center;justify-content:center;color:#8b949e'>无曲绘</div>" >> ../index.html
               fi
               echo "</div>" >> ../index.html
@@ -90,23 +58,23 @@ jobs:
               # --- 右侧：资源列表 ---
               echo "<div class='resource-list'>" >> ../index.html
               
-              # 匹配对应的音乐
-              find music -maxdepth 1 -name "${song_id}*" -type f | while read -r f; do
-                  echo "<div class='file-item'><span><span class='tag tag-music'>MUSIC</span>$(basename "$f")</span><a class='btn' href='$BASE_URL/$f' target='_blank'>下载</a></div>" >> ../../index.html
+              # 匹配对应的音乐 (递归查找)
+              find music -name "${song_id}*" -type f | while read -r f; do
+                  # 这里的变量输出到 index.html 需要特别小心路径
+                  echo "<div class='file-item'><span><span class='tag tag-music'>MUSIC</span>$(basename "$f")</span><a class='btn' href='$BASE_URL/$f' target='_blank' download>下载</a></div>" >> ../../index.html
               done
               
-              # 匹配对应的所有谱面 (EZ, HD, IN, AT)
-              find chart -maxdepth 1 -name "${song_id}*" -type f | while read -r f; do
-                  echo "<div class='file-item'><span><span class='tag tag-chart'>CHART</span>$(basename "$f")</span><a class='btn' href='$BASE_URL/$f' target='_blank'>下载</a></div>" >> ../../index.html
+              # 匹配对应的所有谱面 (递归查找)
+              find chart -name "${song_id}*" -type f | while read -r f; do
+                  echo "<div class='file-item'><span><span class='tag tag-chart'>CHART</span>$(basename "$f")</span><a class='btn' href='$BASE_URL/$f' target='_blank' download>下载</a></div>" >> ../../index.html
               done
               
-              echo "</div>" >> ../index.html # end resource-list
-              echo "</div>" >> ../index.html # end song-content
-              echo "</div>" >> ../index.html # end song-card
+              echo "</div>" >> ../index.html
+              echo "</div>" >> ../index.html
+              echo "</div>" >> ../index.html
           done
           cd ..
 
-          # 网页尾部脚本
           cat >> index.html <<EOF
                   </div>
               </div>
@@ -121,16 +89,3 @@ jobs:
           </body>
           </html>
           EOF
-
-      - name: 3. 推送至网页仓库 (husbvt/phigros.github.io)
-        env:
-          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
-        run: |
-          git clone "https://${AUTH_TOKEN}@github.com/husbvt/phigros.github.io.git" pages_repo
-          cp index.html pages_repo/
-          cd pages_repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html
-          git commit -m "Update Categorized UI" || echo "No changes"
-          git push origin master --force
