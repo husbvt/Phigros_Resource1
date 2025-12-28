@@ -1,0 +1,89 @@
+name: Update Phigros Download Pages
+
+on:
+  workflow_run:
+    workflows: ["Phigros Full Resources Final"] # 当你的主 Action 完成时自动触发
+    types:
+      - completed
+  workflow_dispatch: # 也支持手动触发
+
+jobs:
+  deploy-pages:
+    runs-on: ubuntu-latest
+    # 只有当主 Action 运行成功时才自动执行（如果是手动触发也允许）
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    
+    steps:
+      - name: 1. 检出资源仓库 (husbvt/Phigros_Resource_Build)
+        uses: actions/checkout@v4
+        with:
+          repository: husbvt/Phigros_Resource_Build
+          token: ${{ secrets.BUILD_PAT }}
+          path: build_repo
+
+      - name: 2. 生成 index.html
+        run: |
+          BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
+          cat > index.html <<EOF
+          <!DOCTYPE html>
+          <html lang="zh-CN">
+          <head>
+              <meta charset="UTF-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Phigros 资源下载站</title>
+              <style>
+                  body { font-family: -apple-system, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; line-height: 1.6; }
+                  .container { max-width: 800px; margin: auto; }
+                  h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+                  input#search { width: 100%; padding: 12px; margin-bottom: 20px; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 6px; box-sizing: border-box; }
+                  .item { background: #161b22; border: 1px solid #30363d; padding: 12px; margin-bottom: 8px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; transition: 0.2s; }
+                  .item:hover { border-color: #8b949e; }
+                  .tag { font-size: 0.75em; font-weight: bold; background: #238636; color: #fff; padding: 2px 8px; border-radius: 10px; margin-right: 10px; text-transform: uppercase; }
+                  .btn { color: #58a6ff; text-decoration: none; border: 1px solid #30363d; padding: 5px 12px; border-radius: 6px; font-size: 0.9em; }
+                  .btn:hover { background: #30363d; }
+                  .info { display: flex; align-items: center; }
+              </style>
+          </head>
+          <body>
+              <div class="container">
+                  <h1>Phigros 资源库</h1>
+                  <input type="text" id="search" placeholder="搜索资源名或类型 (如: music, chart)..." onkeyup="filter()">
+                  <div id="list">
+          EOF
+
+          # 扫描资源库中的文件并写入 HTML
+          # 仅扫描特定的四个文件夹
+          find build_repo/{music,chart,illustration,avatar} -type f 2>/dev/null | sort | while read -r file; do
+              RELATIVE_PATH=${file#build_repo/}
+              TYPE=$(echo "$RELATIVE_PATH" | cut -d'/' -f1)
+              NAME=$(basename "$file")
+              echo "<div class='item'><div class='info'><span class='tag'>$TYPE</span><span>$NAME</span></div><a class='btn' href='$BASE_URL/$RELATIVE_PATH' target='_blank'>下载</a></div>" >> index.html
+          done
+
+          cat >> index.html <<EOF
+                  </div>
+              </div>
+              <script>
+                  function filter() {
+                      let q = document.getElementById('search').value.toLowerCase();
+                      document.querySelectorAll('.item').forEach(i => {
+                          i.style.display = i.innerText.toLowerCase().includes(q) ? "" : "none";
+                      });
+                  }
+              </script>
+          </body>
+          </html>
+          EOF
+
+      - name: 3. 检出网页仓库并部署
+        env:
+          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
+        run: |
+          git clone "https://${AUTH_TOKEN}@github.com/husbvt/phigros.github.io.git" pages_repo
+          cp index.html pages_repo/
+          cd pages_repo
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add index.html
+          git commit -m "chore: auto-update index [skip ci]" || echo "No changes"
+          git push origin master --force
