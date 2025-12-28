@@ -21,7 +21,7 @@ jobs:
       - name: 2. 生成 Zephyr 专属下载站
         run: |
           # 使用JSDelivr CDN
-          BASE_URL="https://fastly.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master"
+          BASE_URL="https://gcore.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master"
           
           # 1. 初始化 HTML 头部
           cat > index.html <<EOF
