@@ -90,27 +90,20 @@ jobs:
           cd build_repo
           echo "进入build_repo目录"
           
-          # 获取所有歌曲ID - 从目录名获取
-          echo "=== 从chart目录获取歌曲ID ==="
+          # 获取所有歌曲ID
           if [ -d "chart" ]; then
-              # 获取所有chart子目录作为歌曲ID
               SONG_IDS=$(find chart -type d -mindepth 1 -maxdepth 1 | sed 's|chart/||' | sort)
               echo "从chart目录找到的歌曲ID:"
               echo "$SONG_IDS" | head -20
           else
               SONG_IDS=""
-              echo "chart目录不存在"
           fi
           
-          # 如果没有从chart找到，尝试从music目录获取
           if [ -z "$SONG_IDS" ] && [ -d "music" ]; then
-              echo "=== 从music目录获取歌曲ID ==="
               SONG_IDS=$(find music -type f -name "*.mp3" -o -name "*.ogg" -o -name "*.wav" 2>/dev/null | \
                         xargs -I {} basename {} | \
                         sed 's/\.[^.]*$//; s/-[0-9]*$//' | \
                         sort -u)
-              echo "从music目录找到的歌曲ID:"
-              echo "$SONG_IDS" | head -20
           fi
           
           if [ -z "$SONG_IDS" ]; then
@@ -129,54 +122,34 @@ jobs:
           # 为每个歌曲ID生成卡片
           SONG_COUNT=0
           for id in $SONG_IDS; do
-              # 清理ID - 移除版本号
               id_clean=$(echo "$id" | sed 's/\.[0-9]*$//')
               [ -z "$id_clean" ] && continue
               
               echo "处理歌曲ID: '$id_clean'"
               
-              # 查找所有相关文件
-              
-              # 1. 曲绘文件
-              ILL_FILES=$(find illustration -type f \( \
-                  -name "${id}.*" -o \
-                  -name "${id_clean}.*" \
-              \) 2>/dev/null)
-              
-              # 如果没找到，尝试更宽松的匹配
-              if [ -z "$ILL_FILES" ] || [ "$ILL_FILES" = "" ]; then
+              # 查找文件
+              ILL_FILES=$(find illustration -type f \( -name "${id}.*" -o -name "${id_clean}.*" \) 2>/dev/null)
+              if [ -z "$ILL_FILES" ]; then
                   ILL_FILES=$(find illustration -type f -name "*${id_clean}*" 2>/dev/null)
               fi
               
-              ILL_FILES_COUNT=$(echo "$ILL_FILES" | grep -v "^$" | wc -l)
+              AUDIO_FILES=$(find music -type f \( -name "${id}.*" -o -name "${id_clean}.*" \) 2>/dev/null)
               
-              # 2. 音频文件
-              AUDIO_FILES=$(find music -type f \( \
-                  -name "${id}.*" -o \
-                  -name "${id_clean}.*" \
-              \) 2>/dev/null)
-              
-              AUDIO_FILES_COUNT=$(echo "$AUDIO_FILES" | grep -v "^$" | wc -l)
-              
-              # 3. 谱面文件
               CHART_FILES=""
-              # 先检查是否有以歌曲ID命名的目录
               if [ -d "chart/${id}" ]; then
                   CHART_FILES=$(find "chart/${id}" -type f -name "*.json" 2>/dev/null)
               fi
               
+              ILL_FILES_COUNT=$(echo "$ILL_FILES" | grep -v "^$" | wc -l)
+              AUDIO_FILES_COUNT=$(echo "$AUDIO_FILES" | grep -v "^$" | wc -l)
               CHART_FILES_COUNT=$(echo "$CHART_FILES" | grep -v "^$" | wc -l)
-              
               TOTAL_FILES=$((ILL_FILES_COUNT + AUDIO_FILES_COUNT + CHART_FILES_COUNT))
               
               if [ $TOTAL_FILES -eq 0 ]; then
-                  echo "  -> 没有找到文件，跳过"
                   continue
               fi
               
               SONG_COUNT=$((SONG_COUNT + 1))
-              
-              # 选择第一个曲绘文件作为预览
               ILL_PREVIEW=$(echo "$ILL_FILES" | head -n1)
               
               # 开始写入卡片
@@ -194,7 +167,6 @@ jobs:
                 echo "<div class='preview-area'>"
                 if [ ! -z "$ILL_PREVIEW" ] && [ -f "$ILL_PREVIEW" ]; then
                     ILL_URL="${BASE_URL}/${ILL_PREVIEW}"
-                    # URL编码
                     ILL_URL_ENC=$(echo "$ILL_URL" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
                     echo "<img class='preview-img lazy' data-src='$ILL_URL_ENC' onclick='window.open(this.dataset.src)' alt='$id_clean 曲绘' loading='lazy'>"
                 else
@@ -202,12 +174,12 @@ jobs:
                 fi
                 echo "</div>"
                 
-                # 资源列表
+                # 资源列表 - 使用CORS代理URL
                 echo "<div class='resource-list'>"
                 echo "<div class='select-all' onclick='toggleAll(\"$id_clean\")'>📋 全选/取消全选</div>"
                 echo "<div id='files-$id_clean'>"
                 
-                # 显示曲绘文件
+                # 曲绘文件
                 if [ $ILL_FILES_COUNT -gt 0 ]; then
                     echo "$ILL_FILES" | while read -r f; do
                         [ -z "$f" ] && continue
@@ -220,7 +192,7 @@ jobs:
                     done
                 fi
                 
-                # 显示音频文件
+                # 音频文件
                 if [ $AUDIO_FILES_COUNT -gt 0 ]; then
                     echo "$AUDIO_FILES" | while read -r f; do
                         [ -z "$f" ] && continue
@@ -233,7 +205,7 @@ jobs:
                     done
                 fi
                 
-                # 显示谱面文件
+                # 谱面文件
                 if [ $CHART_FILES_COUNT -gt 0 ]; then
                     echo "$CHART_FILES" | while read -r f; do
                         [ -z "$f" ] && continue
@@ -242,25 +214,19 @@ jobs:
                             f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
                             f_name=$(basename "$f")
                             
-                            # 难度标识
                             diff_class=""
                             diff_text=""
                             case "$f_name" in
                                 *EZ*|*ez*|*Ez*) 
-                                    diff_class="difficulty-ez"
-                                    diff_text="EZ" ;;
+                                    diff_class="difficulty-ez"; diff_text="EZ" ;;
                                 *HD*|*hd*|*Hd*) 
-                                    diff_class="difficulty-hd"
-                                    diff_text="HD" ;;
+                                    diff_class="difficulty-hd"; diff_text="HD" ;;
                                 *IN*|*in*|*In*) 
-                                    diff_class="difficulty-in"
-                                    diff_text="IN" ;;
+                                    diff_class="difficulty-in"; diff_text="IN" ;;
                                 *AT*|*at*|*At*) 
-                                    diff_class="difficulty-at"
-                                    diff_text="AT" ;;
+                                    diff_class="difficulty-at"; diff_text="AT" ;;
                                 *SP*|*sp*|*Sp*) 
-                                    diff_class="difficulty-sp"
-                                    diff_text="SP" ;;
+                                    diff_class="difficulty-sp"; diff_text="SP" ;;
                             esac
                             
                             if [ ! -z "$diff_class" ]; then
@@ -286,12 +252,18 @@ jobs:
               echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> index.html
           fi
 
-          # 3. 写入JS脚本 - 修复下载问题
+          # 3. 写入JS脚本 - 使用CORS代理
           cat >> index.html <<EOF
                   </div>
               </div>
               
               <script>
+                  // 使用CORS代理解决跨域问题
+                  function getCorsProxyUrl(url) {
+                      // 使用corsproxy.io作为代理
+                      return 'https://corsproxy.io/?' + encodeURIComponent(url);
+                  }
+                  
                   // 全局状态管理
                   const downloadStates = {};
                   
@@ -379,7 +351,6 @@ jobs:
                       });
                   }
                   
-                  // 全选/取消全选功能
                   function toggleAll(songId) {
                       const container = document.getElementById('files-' + songId);
                       if (!container) return;
@@ -396,7 +367,6 @@ jobs:
                       updateStatus(songId);
                   }
                   
-                  // 更新状态显示
                   function updateStatus(songId) {
                       const container = document.getElementById('files-' + songId);
                       if (!container) return;
@@ -411,7 +381,7 @@ jobs:
                       }
                   }
                   
-                  // 打包下载核心函数 - 修复版
+                  // 打包下载核心函数 - 使用CORS代理
                   async function pack(songId, button) {
                       console.log('开始打包下载:', songId);
                       
@@ -419,7 +389,6 @@ jobs:
                       
                       // 防止重复点击
                       if (downloadStates[songId] && downloadStates[songId].isDownloading) {
-                          console.log('已经在下载中，跳过');
                           return;
                       }
                       
@@ -460,7 +429,7 @@ jobs:
                           
                           console.log('文件下载队列:', downloadQueue);
                           
-                          // 依次下载每个文件
+                          // 依次下载每个文件 - 使用CORS代理
                           for (const fileInfo of downloadQueue) {
                               processedFiles++;
                               const progress = Math.round((processedFiles / totalFiles) * 100);
@@ -470,16 +439,17 @@ jobs:
                               }
                               
                               try {
-                                  console.log('正在下载:', fileInfo.url);
+                                  console.log('正在下载:', fileInfo.name);
+                                  console.log('原始URL:', fileInfo.url);
                                   
-                                  // 添加随机参数避免缓存
-                                  const urlWithCacheBust = fileInfo.url + (fileInfo.url.includes('?') ? '&' : '?') + 't=' + Date.now();
+                                  // 使用CORS代理URL
+                                  const proxyUrl = getCorsProxyUrl(fileInfo.url);
+                                  console.log('代理URL:', proxyUrl);
                                   
-                                  const response = await fetch(urlWithCacheBust, {
+                                  const response = await fetch(proxyUrl, {
                                       method: 'GET',
                                       mode: 'cors',
                                       cache: 'no-cache',
-                                      credentials: 'omit',
                                       headers: {
                                           'Accept': '*/*',
                                           'Cache-Control': 'no-cache',
@@ -493,16 +463,27 @@ jobs:
                                       throw new Error(\`HTTP \${response.status}: \${response.statusText}\`);
                                   }
                                   
-                                  // 检查响应类型
-                                  const contentType = response.headers.get('content-type') || '';
-                                  console.log('内容类型:', contentType);
-                                  
-                                  // 获取响应内容
                                   const blob = await response.blob();
                                   console.log('文件大小:', blob.size, 'bytes');
                                   
                                   if (blob.size === 0) {
                                       console.warn('文件大小为0:', fileInfo.name);
+                                      // 尝试直接下载（不使用代理）作为备选方案
+                                      try {
+                                          console.log('尝试直接下载...');
+                                          const directResponse = await fetch(fileInfo.url + '?t=' + Date.now());
+                                          if (directResponse.ok) {
+                                              const directBlob = await directResponse.blob();
+                                              if (directBlob.size > 0) {
+                                                  zip.file(fileInfo.name, directBlob);
+                                                  successCount++;
+                                                  continue;
+                                              }
+                                          }
+                                      } catch (directError) {
+                                          console.log('直接下载也失败:', directError);
+                                      }
+                                      throw new Error('文件大小为0');
                                   }
                                   
                                   // 添加到ZIP
@@ -543,7 +524,7 @@ jobs:
                           const downloadUrl = URL.createObjectURL(zipBlob);
                           const link = document.createElement('a');
                           link.href = downloadUrl;
-                          link.download = \`\${songId}_\${Date.now()}.zip\`;
+                          link.download = \`\${songId}_resources_\${Date.now()}.zip\`;
                           link.style.display = 'none';
                           
                           // 添加点击事件清理
@@ -565,7 +546,6 @@ jobs:
                               statusElem.textContent = '下载完成！';
                           }
                           button.innerHTML = '✅ 完成';
-                          console.log('下载完成');
                           
                           // 3秒后恢复按钮状态
                           setTimeout(() => {
@@ -585,14 +565,9 @@ jobs:
                           }
                           button.innerHTML = '❌ 失败';
                           
-                          // 显示详细错误信息
                           let errorMsg = '打包下载失败';
-                          if (error.message.includes('Failed to fetch')) {
-                              errorMsg += '：网络连接失败，请检查网络或稍后重试';
-                          } else if (error.message.includes('HTTP')) {
-                              errorMsg += '：服务器错误，请稍后重试';
-                          } else if (error.message.includes('空')) {
-                              errorMsg += '：下载的文件为空，可能是资源不存在';
+                          if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
+                              errorMsg += '：跨域请求被阻止，请尝试以下方案：\\n1. 使用Chrome并安装CORS插件\\n2. 或直接访问 https://husbvt.github.io/phigros.github.io/';
                           }
                           
                           alert(errorMsg + '\\n\\n错误详情: ' + error.message);
@@ -619,15 +594,13 @@ jobs:
                       }
                   });
                   
-                  // 添加键盘快捷键支持
+                  // 键盘快捷键
                   document.addEventListener('keydown', function(e) {
-                      // Ctrl+F 聚焦搜索框
                       if (e.ctrlKey && e.key === 'f') {
                           e.preventDefault();
                           document.getElementById('search').focus();
                       }
                       
-                      // Esc 清除搜索
                       if (e.key === 'Escape') {
                           const searchInput = document.getElementById('search');
                           if (document.activeElement === searchInput) {
@@ -649,35 +622,31 @@ jobs:
         run: |
           echo "正在部署到GitHub Pages..."
           
-          # 克隆Pages仓库
           git clone "https://${AUTH_TOKEN}@github.com/husbvt/phigros.github.io.git" pages_repo
-          
-          # 复制生成的文件
           cp index.html pages_repo/
           
-          # 进入仓库并提交
           cd pages_repo
-          
-          # 配置git
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           
-          # 检查文件是否变化
           if ! git diff --quiet index.html; then
               echo "检测到index.html有变化，正在提交..."
               git add index.html
-              git commit -m "Zephyr: 修复ZIP下载问题，添加详细日志 $(date '+%Y-%m-%d %H:%M:%S')"
+              git commit -m "Zephyr: 添加CORS代理解决跨域问题 $(date '+%Y-%m-%d %H:%M:%S')"
               git push origin master
               echo "部署成功！"
               
               echo "=== 部署完成 ==="
-              echo "访问地址: https://husbvt.github.io/phigros.github.io/"
-              echo "请在浏览器控制台查看下载过程的详细日志"
+              echo "主访问地址: https://husbvt.github.io/phigros.github.io/"
+              echo "备用地址: https://husbvt.liquid.dpdns.org"
+              echo ""
+              echo "如果CORS代理速度慢，可以："
+              echo "1. 直接访问GitHub Pages地址"
+              echo "2. 安装Chrome CORS插件"
           else
               echo "没有检测到变化，跳过提交。"
           fi
           
-          # 清理
           cd ..
           rm -rf pages_repo build_repo
           echo "部署流程完成。"
