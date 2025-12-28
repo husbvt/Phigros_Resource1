@@ -20,7 +20,7 @@ jobs:
 
       - name: 2. 生成 Zephyr 专属下载站
         run: |
-          # 使用JSDelivr CDN，支持CORS
+          # 使用JSDelivr CDN
           BASE_URL="https://cdn.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master"
           
           # 1. 初始化 HTML 头部
@@ -91,7 +91,7 @@ jobs:
                   <div id="list">
           EOF
 
-          # 2. 生成歌曲卡片 - 使用JSDelivr URL
+          # 2. 生成歌曲卡片
           cd build_repo
           echo "进入build_repo目录"
           
@@ -259,7 +259,7 @@ jobs:
               echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> index.html
           fi
 
-          # 3. 写入JS脚本 - 使用JSDelivr，支持CORS
+          # 3. 写入JS脚本 - 简化请求避免预检
           cat >> index.html <<EOF
                   </div>
               </div>
@@ -270,11 +270,17 @@ jobs:
                   
                   // 页面加载完成后初始化
                   document.addEventListener('DOMContentLoaded', function() {
-                      console.log('Zephyr下载站已加载 - 使用JSDelivr CDN');
+                      console.log('Zephyr下载站已加载');
                       initLazyLoad();
                       initSearch();
                       initCheckboxes();
                       initStatus();
+                      
+                      // 显示使用说明
+                      console.log('使用说明：');
+                      console.log('1. 选择要下载的文件');
+                      console.log('2. 点击"打包下载"按钮');
+                      console.log('3. 等待下载完成');
                   });
                   
                   function initLazyLoad() {
@@ -382,7 +388,22 @@ jobs:
                       }
                   }
                   
-                  // 打包下载核心函数 - 使用JSDelivr CDN（支持CORS）
+                  // 简化的fetch函数，避免触发预检请求
+                  async function simpleFetch(url) {
+                      console.log('简单请求:', url);
+                      
+                      // 使用最简单的方式，避免任何可能触发预检的头部
+                      const response = await fetch(url, {
+                          // 不使用任何自定义头部
+                          // 不设置mode（使用默认值）
+                          // 不设置credentials
+                          // 不设置cache控制
+                      });
+                      
+                      return response;
+                  }
+                  
+                  // 打包下载核心函数
                   async function pack(songId, button) {
                       console.log('开始打包下载:', songId);
                       
@@ -434,7 +455,7 @@ jobs:
                               name: checkbox.dataset.name || checkbox.dataset.url.split('/').pop()
                           }));
                           
-                          console.log('使用JSDelivr CDN下载文件...');
+                          console.log('开始下载文件...');
                           
                           // 依次下载每个文件
                           for (const fileInfo of downloadQueue) {
@@ -449,22 +470,13 @@ jobs:
                               console.log(\`[\${processedFiles}/\${totalFiles}] 下载: \${fileInfo.name}\`);
                               
                               try {
-                                  // 使用JSDelivr CDN，支持CORS
-                                  const urlWithCacheBust = fileInfo.url + (fileInfo.url.includes('?') ? '&' : '?') + 't=' + Date.now();
+                                  // 添加时间戳避免缓存，但放在URL中而不是头部
+                                  const cacheBustUrl = fileInfo.url + (fileInfo.url.includes('?') ? '&' : '?') + '_=' + Date.now();
                                   
-                                  console.log('请求URL:', urlWithCacheBust);
+                                  console.log('请求URL:', cacheBustUrl);
                                   
-                                  const response = await fetch(urlWithCacheBust, {
-                                      method: 'GET',
-                                      mode: 'cors',
-                                      cache: 'no-cache',
-                                      credentials: 'omit',
-                                      headers: {
-                                          'Accept': '*/*',
-                                          'Cache-Control': 'no-cache',
-                                          'Pragma': 'no-cache'
-                                      }
-                                  });
+                                  // 使用简化的fetch，避免预检请求
+                                  const response = await simpleFetch(cacheBustUrl);
                                   
                                   console.log('响应状态:', response.status, response.statusText);
                                   
@@ -479,6 +491,22 @@ jobs:
                                   
                                   if (blob.size === 0) {
                                       console.warn('文件大小为0:', fileInfo.name);
+                                      
+                                      // 尝试使用img标签下载图片
+                                      if (fileInfo.name.match(/\.(png|jpg|jpeg|gif)$/i)) {
+                                          console.log('尝试使用img标签下载图片...');
+                                          try {
+                                              const imgBlob = await downloadViaImage(fileInfo.url);
+                                              if (imgBlob && imgBlob.size > 0) {
+                                                  zip.file(fileInfo.name, imgBlob);
+                                                  successCount++;
+                                                  continue;
+                                              }
+                                          } catch (imgError) {
+                                              console.log('img标签下载失败:', imgError);
+                                          }
+                                      }
+                                      
                                       failedFiles.push({name: fileInfo.name, error: '文件为空'});
                                       continue;
                                   }
@@ -580,9 +608,9 @@ jobs:
                           
                           let errorMsg = '打包下载失败';
                           if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
-                              errorMsg += '：跨域请求被阻止。建议：\\n1. 刷新页面重试\\n2. 确保网络连接正常\\n3. 文件可能暂时不可用';
+                              errorMsg += '：跨域请求被阻止。\\n\\n解决方案：\\n1. 安装CORS浏览器插件\\n2. 或直接访问 https://husbvt.github.io/phigros.github.io/\\n3. 或在GitHub Pages域名下使用';
                           } else if (error.message.includes('所有文件下载都失败了')) {
-                              errorMsg += '：所有文件下载都失败了，请检查网络连接或稍后重试';
+                              errorMsg += '：所有文件下载都失败了，可能是网络问题或资源暂时不可用';
                           }
                           
                           alert(errorMsg + '\\n\\n错误详情: ' + error.message);
@@ -597,6 +625,42 @@ jobs:
                               downloadStates[songId].isDownloading = false;
                           }, 5000);
                       }
+                  }
+                  
+                  // 使用img标签下载图片的备选方案
+                  function downloadViaImage(url) {
+                      return new Promise((resolve, reject) => {
+                          const img = new Image();
+                          img.crossOrigin = 'Anonymous'; // 重要：允许跨域
+                          
+                          img.onload = function() {
+                              const canvas = document.createElement('canvas');
+                              canvas.width = img.width;
+                              canvas.height = img.height;
+                              
+                              const ctx = canvas.getContext('2d');
+                              ctx.drawImage(img, 0, 0);
+                              
+                              canvas.toBlob((blob) => {
+                                  if (blob) {
+                                      resolve(blob);
+                                  } else {
+                                      reject(new Error('无法创建Blob'));
+                                  }
+                              }, 'image/png');
+                          };
+                          
+                          img.onerror = function(err) {
+                              reject(new Error('图片加载失败'));
+                          };
+                          
+                          // 设置超时
+                          setTimeout(() => {
+                              reject(new Error('图片加载超时'));
+                          }, 10000);
+                          
+                          img.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+                      });
                   }
                   
                   // 监听复选框变化
@@ -626,23 +690,35 @@ jobs:
                   });
                   
                   // 测试JSDelivr连接
-                  window.testJSDelivr = async function() {
+                  window.testConnection = async function() {
                       console.log('测试JSDelivr连接...');
+                      const testUrl = 'https://cdn.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master/illustration/000AinSophAur.Yumeji.png';
+                      
                       try {
-                          const testUrl = 'https://cdn.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master/illustration/000AinSophAur.Yumeji.png?t=' + Date.now();
-                          const response = await fetch(testUrl, { mode: 'cors' });
-                          console.log('JSDelivr测试结果:', response.status, response.ok ? '✓ 连接正常' : '✗ 连接失败');
-                          return response.ok;
+                          // 测试简单请求
+                          console.log('测试简单请求...');
+                          const response = await fetch(testUrl);
+                          console.log('简单请求结果:', response.status, response.ok ? '✓ 成功' : '✗ 失败');
+                          
+                          // 测试带时间戳的请求
+                          console.log('测试带缓存清除的请求...');
+                          const response2 = await fetch(testUrl + '?t=' + Date.now());
+                          console.log('缓存清除请求结果:', response2.status, response2.ok ? '✓ 成功' : '✗ 失败');
+                          
+                          return response.ok && response2.ok;
                       } catch (error) {
-                          console.error('JSDelivr测试失败:', error);
+                          console.error('连接测试失败:', error);
                           return false;
                       }
                   };
                   
-                  // 页面加载后测试连接
+                  // 页面加载后显示提示
                   setTimeout(() => {
-                      window.testJSDelivr();
-                  }, 2000);
+                      console.log('如果下载失败，请尝试：');
+                      console.log('1. 刷新页面重试');
+                      console.log('2. 在控制台输入 testConnection() 测试连接');
+                      console.log('3. 直接访问 https://husbvt.github.io/phigros.github.io/');
+                  }, 1000);
               </script>
           </body>
           </html>
@@ -666,17 +742,17 @@ jobs:
           if ! git diff --quiet index.html; then
               echo "检测到index.html有变化，正在提交..."
               git add index.html
-              git commit -m "Zephyr: 切换到JSDelivr CDN解决CORS问题 $(date '+%Y-%m-%d %H:%M:%S')"
+              git commit -m "Zephyr: 简化请求避免CORS预检问题 $(date '+%Y-%m-%d %H:%M:%S')"
               git push origin master
               echo "部署成功！"
               
               echo "=== 部署完成 ==="
-              echo "访问地址: https://husbvt.github.io/phigros.github.io/"
-              echo "使用JSDelivr CDN，支持跨域下载"
+              echo "GitHub Pages地址: https://husbvt.github.io/phigros.github.io/"
               echo ""
-              echo "如果还有问题，请："
-              echo "1. 打开浏览器控制台查看详细错误"
-              echo "2. 测试JSDelivr连接：在控制台输入 testJSDelivr()"
+              echo "如果下载仍然失败："
+              echo "1. 在浏览器控制台输入 testConnection() 测试连接"
+              echo "2. 安装CORS浏览器插件"
+              echo "3. 直接使用GitHub Pages地址访问"
           else
               echo "没有检测到变化，跳过提交。"
           fi
