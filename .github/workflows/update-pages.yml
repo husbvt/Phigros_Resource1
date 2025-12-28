@@ -20,213 +20,743 @@ jobs:
 
       - name: 2. 生成 Zephyr 专属下载站
         run: |
-          # 设置基础配置
-          BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
+          # 使用JSDelivr CDN
+          BASE_URL="https://cdn.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master"
           
-          # 1. 生成 HTML 头部和样式
+          # 1. 初始化 HTML 头部
           cat > index.html <<EOF
           <!DOCTYPE html>
           <html lang="zh-CN">
           <head>
               <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-              <title>Zephyr的Phigros下载站</title>
+              <meta name="viewport" content="width=device-width, initial-scale=1.0">
+              <title>Zephyr的下载站</title>
               <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
               <style>
-                  :root { --blue: #58a6ff; --bg: #0d1117; --card: #161b22; --border: #30363d; --text: #c9d1d9; }
-                  body { font-family: -apple-system, system-ui, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 15px; line-height: 1.5; }
-                  .container { max-width: 1000px; margin: auto; }
-                  h1 { color: var(--blue); text-align: center; margin-bottom: 25px; }
-                  .search-box { width: 100%; padding: 12px; background: var(--card); border: 1px solid var(--border); color: #fff; border-radius: 8px; margin-bottom: 20px; box-sizing: border-box; font-size: 16px; transition: border-color 0.2s; }
-                  .search-box:focus { outline: none; border-color: var(--blue); }
-                  
-                  .song-card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; margin-bottom: 20px; overflow: hidden; }
-                  .song-header { background: #21262d; padding: 12px 15px; border-bottom: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
-                  .song-header span { font-weight: bold; color: var(--blue); }
-                  
-                  .song-content { display: grid; grid-template-columns: 200px 1fr; gap: 15px; padding: 15px; }
-                  @media (max-width: 650px) { .song-content { grid-template-columns: 1fr; } }
-                  
-                  .preview-img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: 6px; background: #000; cursor: zoom-in; }
-                  .file-item { display: flex; align-items: center; background: #0d1117; padding: 8px 12px; margin-bottom: 6px; border-radius: 6px; border: 1px solid var(--border); font-size: 13px; cursor: pointer; }
-                  .file-item:hover { border-color: var(--blue); }
-                  .checkbox { margin-right: 10px; }
-                  
-                  .tag { font-size: 11px; padding: 2px 6px; border-radius: 4px; color: #fff; margin-right: 8px; font-weight: bold; }
+                  :root { --blue: #58a6ff; --bg: #0d1117; --card: #161b22; }
+                  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: #c9d1d9; margin: 0; padding: 15px; }
+                  .container { max-width: 900px; margin: auto; }
+                  h1 { color: var(--blue); text-align: center; margin-bottom: 30px; padding-top: 20px; }
+                  .search-box { width: 100%; padding: 12px; background: var(--card); border: 1px solid #30363d; color: #fff; border-radius: 8px; margin-bottom: 20px; box-sizing: border-box; font-size: 16px; }
+                  .search-box:focus { outline: none; border-color: #58a6ff; }
+                  .song-card { background: var(--card); border: 1px solid #30363d; border-radius: 12px; margin-bottom: 25px; overflow: hidden; transition: transform 0.2s, box-shadow 0.2s; }
+                  .song-card:hover { transform: translateY(-2px); box-shadow: 0 8px 16px rgba(0,0,0,0.3); }
+                  .song-header { background: #21262d; padding: 15px; border-bottom: 1px solid #30363d; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+                  .song-header span { font-size: 1.2em; font-weight: bold; color: #58a6ff; word-break: break-all; }
+                  .song-content { display: flex; flex-direction: column; padding: 15px; gap: 20px; }
+                  @media (min-width: 600px) { .song-content { flex-direction: row; } }
+                  .preview-area { flex: 0 0 250px; }
+                  .preview-img { width: 100%; height: 140px; object-fit: cover; border-radius: 8px; border: 1px solid #30363d; background: linear-gradient(45deg, #333, #444); transition: opacity 0.3s, transform 0.3s; opacity: 0; cursor: pointer; }
+                  .preview-img:hover { transform: scale(1.02); }
+                  .preview-img.loaded { opacity: 1; }
+                  .resource-list { flex: 1; }
+                  .file-item { display: flex; align-items: center; background: #0d1117; padding: 10px 12px; margin-bottom: 8px; border-radius: 6px; border: 1px solid #30363d; font-size: 14px; cursor: pointer; transition: background 0.2s; user-select: none; }
+                  .file-item:hover { background: #21262d; border-color: #58a6ff; }
+                  .checkbox { margin-right: 12px; width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; }
+                  .tag { font-size: 0.75em; padding: 3px 8px; border-radius: 4px; color: #fff; margin-right: 10px; font-weight: bold; min-width: 50px; text-align: center; flex-shrink: 0; }
                   .tag-audio { background: #1f6feb; }
                   .tag-chart { background: #238636; }
                   .tag-ill { background: #da3633; }
-                  
-                  .btn-zip { background: #238636; color: white; border: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold; }
-                  .btn-zip:disabled { background: #30363d; opacity: 0.7; }
-                  
-                  .difficulty { font-size: 10px; padding: 1px 4px; border-radius: 3px; margin-left: auto; }
-                  .difficulty-ez { background: #238636; }
-                  .difficulty-hd { background: #1f6feb; }
-                  .difficulty-in { background: #8957e5; }
-                  .difficulty-at { background: #f0883e; }
-                  .difficulty-sp { background: #9e6a03; }
-                  
-                  /* 进度条样式 */
-                  .progress-container { width: 100%; background: #21262d; height: 4px; border-radius: 2px; margin-top: 8px; display: none; }
-                  .progress-bar { width: 0%; height: 100%; background: var(--blue); transition: width 0.2s; }
+                  .btn-zip { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s; font-size: 14px; }
+                  .btn-zip:hover { background: #2ea043; }
+                  .btn-zip:disabled { background: #30363d; cursor: not-allowed; opacity: 0.6; }
+                  .btn-zip:active { transform: scale(0.98); }
+                  .status { font-size: 0.85em; color: #8b949e; margin-right: 10px; }
+                  .no-files { text-align: center; color: #8b949e; padding: 20px; font-style: italic; }
+                  .select-all { margin: 10px 0 15px 0; font-size: 0.9em; color: #58a6ff; cursor: pointer; user-select: none; }
+                  .select-all:hover { text-decoration: underline; }
+                  .file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+                  .difficulty { font-size: 0.7em; padding: 1px 4px; border-radius: 3px; background: #30363d; color: #8b949e; margin-left: 5px; }
+                  .difficulty-ez { background: #238636; color: #fff; }
+                  .difficulty-hd { background: #da3633; color: #fff; }
+                  .difficulty-in { background: #8957e5; color: #fff; }
+                  .difficulty-at { background: #f0883e; color: #fff; }
+                  .difficulty-sp { background: #9e6a03; color: #fff; }
+                  .progress-bar { width: 100%; height: 4px; background: #30363d; border-radius: 2px; margin-top: 5px; overflow: hidden; display: none; }
+                  .progress-fill { height: 100%; background: #238636; width: 0%; transition: width 0.3s; }
+                  @media (max-width: 600px) {
+                      .song-header { flex-direction: column; align-items: flex-start; }
+                      .preview-area { flex: 0 0 180px; }
+                      .preview-img { height: 120px; }
+                  }
               </style>
           </head>
           <body>
               <div class="container">
-                  <h1>🎵 Zephyr的Phigros资源站</h1>
-                  <input type="text" id="search" class="search-box" placeholder="输入歌曲名或ID搜索...">
+                  <h1>🎵 Zephyr的Phigros资源下载站</h1>
+                  <div style="text-align: center; margin-bottom: 20px; color: #8b949e; font-size: 0.9em;">
+                      使用JSDelivr CDN，支持跨域下载
+                  </div>
+                  <input type="text" id="search" class="search-box" placeholder="搜索歌曲ID (例如: 青芽) 或直接输入ID...">
                   <div id="list">
           EOF
 
+          # 2. 生成歌曲卡片
           cd build_repo
-          # 2. 改进的逻辑：遍历 chart 文件夹获取所有歌曲目录
-          find chart -maxdepth 1 -mindepth 1 -type d | sort | while read -r dir; do
-              id=$(basename "$dir")
+          echo "进入build_repo目录"
+          
+          # 获取所有歌曲ID
+          if [ -d "chart" ]; then
+              SONG_IDS=$(find chart -type d -mindepth 1 -maxdepth 1 | sed 's|chart/||' | sort)
+              echo "从chart目录找到的歌曲ID:"
+              echo "$SONG_IDS" | head -20
+          else
+              SONG_IDS=""
+          fi
+          
+          if [ -z "$SONG_IDS" ] && [ -d "music" ]; then
+              SONG_IDS=$(find music -type f -name "*.mp3" -o -name "*.ogg" -o -name "*.wav" 2>/dev/null | \
+                        xargs -I {} basename {} | \
+                        sed 's/\.[^.]*$//; s/-[0-9]*$//' | \
+                        sort -u)
+          fi
+          
+          if [ -z "$SONG_IDS" ]; then
+              echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> ../index.html
+              cd ..
+              cat >> index.html <<EOF
+                  </div>
+              </div>
+              <script>console.log('没有找到任何资源文件');</script>
+          </body>
+          </html>
+          EOF
+              exit 0
+          fi
+          
+          # 为每个歌曲ID生成卡片
+          SONG_COUNT=0
+          for id in $SONG_IDS; do
+              id_clean=$(echo "$id" | sed 's/\.[0-9]*$//')
+              [ -z "$id_clean" ] && continue
               
-              # 查找关联文件
-              # 匹配规则：精确匹配 ID 或 ID.扩展名
-              ILL_FILES=$(find illustration -type f -name "${id}.*" 2>/dev/null)
-              AUDIO_FILES=$(find music -type f \( -name "${id}.*" -o -name "${id}-*.mp3" \) 2>/dev/null)
-              CHART_FILES=$(find "chart/${id}" -type f -name "*.json" 2>/dev/null)
+              echo "处理歌曲ID: '$id_clean'"
               
-              # 跳过完全没文件的（虽然不太可能）
-              [ -z "$ILL_FILES" ] && [ -z "$AUDIO_FILES" ] && [ -z "$CHART_FILES" ] && continue
+              # 查找文件
+              ILL_FILES=$(find illustration -type f \( -name "${id}.*" -o -name "${id_clean}.*" \) 2>/dev/null)
+              if [ -z "$ILL_FILES" ]; then
+                  ILL_FILES=$(find illustration -type f -name "*${id_clean}*" 2>/dev/null)
+              fi
               
+              AUDIO_FILES=$(find music -type f \( -name "${id}.*" -o -name "${id_clean}.*" \) 2>/dev/null)
+              
+              CHART_FILES=""
+              if [ -d "chart/${id}" ]; then
+                  CHART_FILES=$(find "chart/${id}" -type f -name "*.json" 2>/dev/null)
+              fi
+              
+              ILL_FILES_COUNT=$(echo "$ILL_FILES" | grep -v "^$" | wc -l)
+              AUDIO_FILES_COUNT=$(echo "$AUDIO_FILES" | grep -v "^$" | wc -l)
+              CHART_FILES_COUNT=$(echo "$CHART_FILES" | grep -v "^$" | wc -l)
+              TOTAL_FILES=$((ILL_FILES_COUNT + AUDIO_FILES_COUNT + CHART_FILES_COUNT))
+              
+              if [ $TOTAL_FILES -eq 0 ]; then
+                  continue
+              fi
+              
+              SONG_COUNT=$((SONG_COUNT + 1))
               ILL_PREVIEW=$(echo "$ILL_FILES" | head -n1)
               
-              # 生成卡片 HTML
-              echo "<div class='song-card' data-name='$id'>" >> ../index.html
-              echo "<div class='song-header'><span>$id</span>" >> ../index.html
-              echo "<button class='btn-zip' onclick='pack(\"$id\", this)'>📦 打包下载</button></div>" >> ../index.html
-              echo "<div class='song-content'><div class='preview-area'>" >> ../index.html
-              
-              if [ -n "$ILL_PREVIEW" ]; then
-                  echo "<img class='preview-img lazy' data-src='${BASE_URL}/${ILL_PREVIEW}' onclick='window.open(this.dataset.src)'>" >> ../index.html
-              else
-                  echo "<div style='height:112px; background:#333; border-radius:6px; display:flex; align-items:center; justify-content:center;'>No Cover</div>" >> ../index.html
-              fi
-              echo "<div class='progress-container' id='pg-box-$id'><div class='progress-bar' id='pg-$id'></div></div>" >> ../index.html
-              echo "</div><div class='resource-list' id='files-$id'>" >> ../index.html
-              
-              # 渲染文件列表函数
-              render_file() {
-                  local f="$1"
-                  local type="$2"
-                  local tag_class="$3"
-                  local name=$(basename "$f")
-                  local url="${BASE_URL}/${f}"
-                  # 处理 URL 中的特殊字符
-                  url=$(echo "$url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g')
-                  
-                  local diff_tag=""
-                  if [[ "$type" == "谱面" ]]; then
-                      case "${name^^}" in
-                          *EZ*) diff_tag="<span class='difficulty difficulty-ez'>EZ</span>" ;;
-                          *HD*) diff_tag="<span class='difficulty difficulty-hd'>HD</span>" ;;
-                          *IN*) diff_tag="<span class='difficulty difficulty-in'>IN</span>" ;;
-                          *AT*) diff_tag="<span class='difficulty difficulty-at'>AT</span>" ;;
-                          *SP*) diff_tag="<span class='difficulty difficulty-sp'>SP</span>" ;;
-                      esac
-                  fi
-                  
-                  echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$url' data-name='$name' checked><span class='tag $tag_class'>$type</span>$name $diff_tag</label>" >> ../index.html
-              }
-
-              for f in $ILL_FILES; do render_file "$f" "曲绘" "tag-ill"; done
-              for f in $AUDIO_FILES; do render_file "$f" "音频" "tag-audio"; done
-              for f in $CHART_FILES; do render_file "$f" "谱面" "tag-chart"; done
-              
-              echo "</div></div></div>" >> ../index.html
+              # 开始写入卡片
+              {
+                echo "<div class='song-card' data-name='$id_clean'>"
+                echo "<div class='song-header'>"
+                echo "<span>$id_clean</span>"
+                echo "<div style='display: flex; align-items: center;'>"
+                echo "<span id='st-$id_clean' class='status'>$TOTAL_FILES个文件</span>"
+                echo "<button class='btn-zip' onclick='pack(\"$id_clean\", this)' title='下载选中的文件'>📦 打包下载</button>"
+                echo "</div></div>"
+                echo "<div class='song-content'>"
+                
+                # 图片预览
+                echo "<div class='preview-area'>"
+                if [ ! -z "$ILL_PREVIEW" ] && [ -f "$ILL_PREVIEW" ]; then
+                    ILL_URL="${BASE_URL}/${ILL_PREVIEW}"
+                    ILL_URL_ENC=$(echo "$ILL_URL" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
+                    echo "<img class='preview-img lazy' data-src='$ILL_URL_ENC' onclick='window.open(this.dataset.src)' alt='$id_clean 曲绘' loading='lazy'>"
+                else
+                    echo "<div style='height:140px;background:linear-gradient(135deg,#333,#555);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#8b949e;'>无预览</div>"
+                fi
+                echo "</div>"
+                
+                # 资源列表
+                echo "<div class='resource-list'>"
+                echo "<div class='select-all' onclick='toggleAll(\"$id_clean\")'>📋 全选/取消全选</div>"
+                echo "<div id='files-$id_clean'>"
+                
+                # 曲绘文件
+                if [ $ILL_FILES_COUNT -gt 0 ]; then
+                    echo "$ILL_FILES" | while read -r f; do
+                        [ -z "$f" ] && continue
+                        if [ -f "$f" ]; then
+                            f_url="${BASE_URL}/${f}"
+                            f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
+                            f_name=$(basename "$f")
+                            echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' data-name='$f_name' checked><span class='tag tag-ill'>曲绘</span><span class='file-name'>$f_name</span></label>"
+                        fi
+                    done
+                fi
+                
+                # 音频文件
+                if [ $AUDIO_FILES_COUNT -gt 0 ]; then
+                    echo "$AUDIO_FILES" | while read -r f; do
+                        [ -z "$f" ] && continue
+                        if [ -f "$f" ]; then
+                            f_url="${BASE_URL}/${f}"
+                            f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
+                            f_name=$(basename "$f")
+                            echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' data-name='$f_name' checked><span class='tag tag-audio'>音频</span><span class='file-name'>$f_name</span></label>"
+                        fi
+                    done
+                fi
+                
+                # 谱面文件
+                if [ $CHART_FILES_COUNT -gt 0 ]; then
+                    echo "$CHART_FILES" | while read -r f; do
+                        [ -z "$f" ] && continue
+                        if [ -f "$f" ]; then
+                            f_url="${BASE_URL}/${f}"
+                            f_url_enc=$(echo "$f_url" | sed 's/ /%20/g; s/\[/%5B/g; s/\]/%5D/g; s/#/%23/g; s/&/%26/g')
+                            f_name=$(basename "$f")
+                            
+                            diff_class=""
+                            diff_text=""
+                            case "$f_name" in
+                                *EZ*|*ez*|*Ez*) 
+                                    diff_class="difficulty-ez"; diff_text="EZ" ;;
+                                *HD*|*hd*|*Hd*) 
+                                    diff_class="difficulty-hd"; diff_text="HD" ;;
+                                *IN*|*in*|*In*) 
+                                    diff_class="difficulty-in"; diff_text="IN" ;;
+                                *AT*|*at*|*At*) 
+                                    diff_class="difficulty-at"; diff_text="AT" ;;
+                                *SP*|*sp*|*Sp*) 
+                                    diff_class="difficulty-sp"; diff_text="SP" ;;
+                            esac
+                            
+                            if [ ! -z "$diff_class" ]; then
+                                echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' data-name='$f_name' checked><span class='tag tag-chart'>谱面</span><span class='file-name'>$f_name</span><span class='difficulty $diff_class'>$diff_text</span></label>"
+                            else
+                                echo "<label class='file-item'><input type='checkbox' class='checkbox' data-url='$f_url_enc' data-name='$f_name' checked><span class='tag tag-chart'>谱面</span><span class='file-name'>$f_name</span></label>"
+                            fi
+                        fi
+                    done
+                else
+                    echo "<div style='color:#8b949e; font-size:0.9em; padding:5px;'>暂无谱面文件</div>"
+                fi
+                
+                echo "</div>"
+                echo "<div class='progress-bar' id='progress-$id_clean'><div class='progress-fill' id='progress-fill-$id_clean'></div></div>"
+                echo "</div></div></div>"
+              } >> ../index.html
           done
+          
           cd ..
 
-          # 3. 注入 JavaScript 逻辑
+          echo "总共生成 $SONG_COUNT 个歌曲卡片"
+          
+          if [ $SONG_COUNT -eq 0 ]; then
+              echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> index.html
+          fi
+
+          # 3. 写入JS脚本 - 简化请求避免预检
           cat >> index.html <<EOF
                   </div>
               </div>
+              
               <script>
-                  // 1. 搜索过滤
-                  document.getElementById('search').addEventListener('input', (e) => {
-                      const term = e.target.value.toLowerCase();
-                      document.querySelectorAll('.song-card').forEach(card => {
-                          card.style.display = card.dataset.name.toLowerCase().includes(term) ? '' : 'none';
-                      });
-                  });
-
-                  // 2. 懒加载图片
-                  const observer = new IntersectionObserver(entries => {
-                      entries.forEach(entry => {
-                          if(entry.isIntersecting) {
-                              const img = entry.target;
-                              img.src = img.dataset.src;
-                              observer.unobserve(img);
-                          }
-                      });
-                  });
-                  document.querySelectorAll('.preview-img.lazy').forEach(img => observer.observe(img));
-
-                  // 3. 打包下载逻辑
-                  async function pack(id, btn) {
-                      const container = document.getElementById('files-' + id);
-                      const checks = container.querySelectorAll('.checkbox:checked');
-                      if(checks.length === 0) return alert('请选择文件');
-
-                      btn.disabled = true;
-                      const pgBox = document.getElementById('pg-box-' + id);
-                      const pgBar = document.getElementById('pg-' + id);
-                      pgBox.style.display = 'block';
+                  // 全局状态管理
+                  const downloadStates = {};
+                  
+                  // 页面加载完成后初始化
+                  document.addEventListener('DOMContentLoaded', function() {
+                      console.log('Zephyr下载站已加载');
+                      initLazyLoad();
+                      initSearch();
+                      initCheckboxes();
+                      initStatus();
                       
-                      const zip = new JSZip();
-                      let loaded = 0;
-
-                      try {
-                          for(let cb of checks) {
-                              // 使用 CORS 代理
-                              const proxyUrl = 'https://corsproxy.io/?' + encodeURIComponent(cb.dataset.url);
-                              const res = await fetch(proxyUrl);
-                              if(!res.ok) throw new Error('网络请求失败');
-                              const blob = await res.blob();
-                              zip.file(cb.dataset.name, blob);
-                              
-                              loaded++;
-                              pgBar.style.width = (loaded / checks.length * 100) + '%';
+                      // 显示使用说明
+                      console.log('使用说明：');
+                      console.log('1. 选择要下载的文件');
+                      console.log('2. 点击"打包下载"按钮');
+                      console.log('3. 等待下载完成');
+                  });
+                  
+                  function initLazyLoad() {
+                      const imageObserver = new IntersectionObserver((entries, observer) => {
+                          entries.forEach(entry => {
+                              if (entry.isIntersecting) {
+                                  const img = entry.target;
+                                  if (img.dataset.src) {
+                                      img.src = img.dataset.src;
+                                      img.classList.add('loaded');
+                                      observer.unobserve(img);
+                                  }
+                              }
+                          });
+                      }, { rootMargin: '200px', threshold: 0.1 });
+                      
+                      document.querySelectorAll('.preview-img.lazy').forEach(img => {
+                          imageObserver.observe(img);
+                      });
+                  }
+                  
+                  function initSearch() {
+                      const searchInput = document.getElementById('search');
+                      searchInput.addEventListener('input', function() {
+                          const searchTerm = this.value.toLowerCase().trim();
+                          const cards = document.querySelectorAll('.song-card');
+                          let visibleCount = 0;
+                          
+                          cards.forEach(card => {
+                              const songId = card.dataset.name.toLowerCase();
+                              const isMatch = songId.includes(searchTerm);
+                              card.style.display = isMatch ? '' : 'none';
+                              if (isMatch) visibleCount++;
+                          });
+                          
+                          if (visibleCount === 0 && searchTerm) {
+                              const listDiv = document.getElementById('list');
+                              if (!listDiv.querySelector('.no-results')) {
+                                  const noResults = document.createElement('div');
+                                  noResults.className = 'no-files no-results';
+                                  noResults.textContent = '未找到匹配的歌曲ID';
+                                  listDiv.appendChild(noResults);
+                              }
+                          } else {
+                              const noResults = document.querySelector('.no-results');
+                              if (noResults) noResults.remove();
                           }
-
-                          const content = await zip.generateAsync({type: 'blob'});
-                          const link = document.createElement('a');
-                          link.href = URL.createObjectURL(content);
-                          link.download = \`Phigros_\${id}.zip\`;
-                          link.click();
-                          btn.innerText = '✅ 下载成功';
-                      } catch(e) {
-                          alert('下载失败: ' + e.message);
-                          btn.innerText = '❌ 失败';
-                      } finally {
-                          setTimeout(() => {
-                              btn.disabled = false;
-                              btn.innerText = '📦 打包下载';
-                              pgBox.style.display = 'none';
-                              pgBar.style.width = '0%';
-                          }, 3000);
+                      });
+                      
+                      searchInput.addEventListener('keydown', function(e) {
+                          if (e.key === 'Escape') {
+                              this.value = '';
+                              this.dispatchEvent(new Event('input'));
+                          }
+                      });
+                  }
+                  
+                  function initCheckboxes() {
+                      document.querySelectorAll('.file-item').forEach(item => {
+                          item.addEventListener('click', function(e) {
+                              if (e.target.tagName === 'INPUT') return;
+                              const checkbox = this.querySelector('input[type="checkbox"]');
+                              if (checkbox) {
+                                  checkbox.checked = !checkbox.checked;
+                                  checkbox.dispatchEvent(new Event('change'));
+                              }
+                          });
+                      });
+                  }
+                  
+                  function initStatus() {
+                      document.querySelectorAll('.song-card').forEach(card => {
+                          const songId = card.dataset.name;
+                          updateStatus(songId);
+                      });
+                  }
+                  
+                  function toggleAll(songId) {
+                      const container = document.getElementById('files-' + songId);
+                      if (!container) return;
+                      
+                      const checkboxes = container.querySelectorAll('.checkbox');
+                      if (checkboxes.length === 0) return;
+                      
+                      const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+                      
+                      checkboxes.forEach(cb => {
+                          cb.checked = !allChecked;
+                      });
+                      
+                      updateStatus(songId);
+                  }
+                  
+                  function updateStatus(songId) {
+                      const container = document.getElementById('files-' + songId);
+                      if (!container) return;
+                      
+                      const checkboxes = container.querySelectorAll('.checkbox');
+                      const checkedCount = Array.from(checkboxes).filter(cb => cb.checked).length;
+                      const totalCount = checkboxes.length;
+                      
+                      const statusElem = document.getElementById('st-' + songId);
+                      if (statusElem) {
+                          statusElem.textContent = \`\${checkedCount}/\${totalCount}个选中\`;
                       }
                   }
+                  
+                  // 简化的fetch函数，避免触发预检请求
+                  async function simpleFetch(url) {
+                      console.log('简单请求:', url);
+                      
+                      // 使用最简单的方式，避免任何可能触发预检的头部
+                      const response = await fetch(url, {
+                          // 不使用任何自定义头部
+                          // 不设置mode（使用默认值）
+                          // 不设置credentials
+                          // 不设置cache控制
+                      });
+                      
+                      return response;
+                  }
+                  
+                  // 打包下载核心函数
+                  async function pack(songId, button) {
+                      console.log('开始打包下载:', songId);
+                      
+                      const statusElem = document.getElementById('st-' + songId);
+                      const progressBar = document.getElementById('progress-' + songId);
+                      const progressFill = document.getElementById('progress-fill-' + songId);
+                      
+                      // 防止重复点击
+                      if (downloadStates[songId] && downloadStates[songId].isDownloading) {
+                          return;
+                      }
+                      
+                      // 获取选中的文件
+                      const container = document.getElementById('files-' + songId);
+                      if (!container) {
+                          alert('未找到该歌曲的资源');
+                          return;
+                      }
+                      
+                      const checkboxes = container.querySelectorAll('.checkbox:checked');
+                      if (checkboxes.length === 0) {
+                          alert('请至少选择一个文件');
+                          return;
+                      }
+                      
+                      console.log('找到', checkboxes.length, '个选中文件');
+                      
+                      // 设置下载状态
+                      downloadStates[songId] = { isDownloading: true, progress: 0 };
+                      button.disabled = true;
+                      button.innerHTML = '⏳ 处理中...';
+                      progressBar.style.display = 'block';
+                      progressFill.style.width = '0%';
+                      
+                      if (statusElem) {
+                          statusElem.textContent = '准备下载...';
+                      }
+                      
+                      try {
+                          const zip = new JSZip();
+                          const totalFiles = checkboxes.length;
+                          let processedFiles = 0;
+                          let successCount = 0;
+                          let failedFiles = [];
+                          
+                          // 创建文件下载队列
+                          const downloadQueue = Array.from(checkboxes).map(checkbox => ({
+                              url: checkbox.dataset.url,
+                              name: checkbox.dataset.name || checkbox.dataset.url.split('/').pop()
+                          }));
+                          
+                          console.log('开始下载文件...');
+                          
+                          // 依次下载每个文件
+                          for (const fileInfo of downloadQueue) {
+                              processedFiles++;
+                              const progress = Math.round((processedFiles / totalFiles) * 100);
+                              progressFill.style.width = progress + '%';
+                              
+                              if (statusElem) {
+                                  statusElem.textContent = \`下载中 (\${progress}%): \${fileInfo.name}\`;
+                              }
+                              
+                              console.log(\`[\${processedFiles}/\${totalFiles}] 下载: \${fileInfo.name}\`);
+                              
+                              try {
+                                  // 添加时间戳避免缓存，但放在URL中而不是头部
+                                  const cacheBustUrl = fileInfo.url + (fileInfo.url.includes('?') ? '&' : '?') + '_=' + Date.now();
+                                  
+                                  console.log('请求URL:', cacheBustUrl);
+                                  
+                                  // 使用简化的fetch，避免预检请求
+                                  const response = await simpleFetch(cacheBustUrl);
+                                  
+                                  console.log('响应状态:', response.status, response.statusText);
+                                  
+                                  if (!response.ok) {
+                                      console.error('HTTP错误:', response.status, response.statusText);
+                                      failedFiles.push({name: fileInfo.name, error: \`HTTP \${response.status}\`});
+                                      continue;
+                                  }
+                                  
+                                  const blob = await response.blob();
+                                  console.log('文件大小:', blob.size, 'bytes');
+                                  
+                                  if (blob.size === 0) {
+                                      console.warn('文件大小为0:', fileInfo.name);
+                                      
+                                      // 尝试使用img标签下载图片
+                                      if (fileInfo.name.match(/\.(png|jpg|jpeg|gif)$/i)) {
+                                          console.log('尝试使用img标签下载图片...');
+                                          try {
+                                              const imgBlob = await downloadViaImage(fileInfo.url);
+                                              if (imgBlob && imgBlob.size > 0) {
+                                                  zip.file(fileInfo.name, imgBlob);
+                                                  successCount++;
+                                                  continue;
+                                              }
+                                          } catch (imgError) {
+                                              console.log('img标签下载失败:', imgError);
+                                          }
+                                      }
+                                      
+                                      failedFiles.push({name: fileInfo.name, error: '文件为空'});
+                                      continue;
+                                  }
+                                  
+                                  // 添加到ZIP
+                                  zip.file(fileInfo.name, blob);
+                                  successCount++;
+                                  
+                              } catch (fetchError) {
+                                  console.error('下载文件失败:', fileInfo.name, fetchError);
+                                  failedFiles.push({name: fileInfo.name, error: fetchError.message});
+                              }
+                          }
+                          
+                          console.log('下载完成，成功:', successCount, '失败:', failedFiles.length);
+                          
+                          if (successCount === 0) {
+                              throw new Error('所有文件下载都失败了');
+                          }
+                          
+                          // 生成ZIP文件
+                          if (statusElem) {
+                              statusElem.textContent = '正在生成ZIP文件...';
+                          }
+                          progressFill.style.width = '95%';
+                          console.log('开始生成ZIP文件...');
+                          
+                          const zipBlob = await zip.generateAsync({
+                              type: 'blob',
+                              compression: 'DEFLATE',
+                              compressionOptions: { level: 6 }
+                          });
+                          
+                          console.log('ZIP文件大小:', zipBlob.size, 'bytes');
+                          
+                          if (zipBlob.size === 0) {
+                              throw new Error('生成的ZIP文件为空');
+                          }
+                          
+                          // 创建下载链接
+                          const downloadUrl = URL.createObjectURL(zipBlob);
+                          const link = document.createElement('a');
+                          link.href = downloadUrl;
+                          link.download = \`\${songId}_resources_\${Date.now()}.zip\`;
+                          link.style.display = 'none';
+                          
+                          // 添加点击事件清理
+                          link.onclick = () => {
+                              setTimeout(() => {
+                                  document.body.removeChild(link);
+                                  URL.revokeObjectURL(downloadUrl);
+                              }, 100);
+                          };
+                          
+                          document.body.appendChild(link);
+                          
+                          // 触发下载
+                          console.log('触发下载:', link.download);
+                          link.click();
+                          progressFill.style.width = '100%';
+                          
+                          // 更新状态
+                          if (statusElem) {
+                              let statusText = '下载完成！';
+                              if (failedFiles.length > 0) {
+                                  statusText += \` (\${failedFiles.length}个文件失败)\`;
+                              }
+                              statusElem.textContent = statusText;
+                          }
+                          button.innerHTML = '✅ 完成';
+                          
+                          // 显示失败文件信息
+                          if (failedFiles.length > 0) {
+                              setTimeout(() => {
+                                  const failedList = failedFiles.map(f => \`\${f.name}: \${f.error}\`).join('\\n');
+                                  alert(\`下载完成，但以下文件下载失败:\\n\\n\${failedList}\\n\\n成功下载: \${successCount}个文件\\n失败: \${failedFiles.length}个文件\`);
+                              }, 1000);
+                          }
+                          
+                          // 3秒后恢复按钮状态
+                          setTimeout(() => {
+                              button.disabled = false;
+                              button.innerHTML = '📦 打包下载';
+                              progressBar.style.display = 'none';
+                              if (statusElem) {
+                                  updateStatus(songId);
+                              }
+                              downloadStates[songId].isDownloading = false;
+                          }, 3000);
+                          
+                      } catch (error) {
+                          console.error('打包下载失败:', error);
+                          
+                          if (statusElem) {
+                              statusElem.textContent = '下载失败';
+                          }
+                          button.innerHTML = '❌ 失败';
+                          progressBar.style.display = 'none';
+                          
+                          let errorMsg = '打包下载失败';
+                          if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
+                              errorMsg += '：跨域请求被阻止。\\n\\n解决方案：\\n1. 安装CORS浏览器插件\\n2. 或直接访问 https://husbvt.github.io/phigros.github.io/\\n3. 或在GitHub Pages域名下使用';
+                          } else if (error.message.includes('所有文件下载都失败了')) {
+                              errorMsg += '：所有文件下载都失败了，可能是网络问题或资源暂时不可用';
+                          }
+                          
+                          alert(errorMsg + '\\n\\n错误详情: ' + error.message);
+                          
+                          // 5秒后恢复按钮状态
+                          setTimeout(() => {
+                              button.disabled = false;
+                              button.innerHTML = '📦 打包下载';
+                              if (statusElem) {
+                                  updateStatus(songId);
+                              }
+                              downloadStates[songId].isDownloading = false;
+                          }, 5000);
+                      }
+                  }
+                  
+                  // 使用img标签下载图片的备选方案
+                  function downloadViaImage(url) {
+                      return new Promise((resolve, reject) => {
+                          const img = new Image();
+                          img.crossOrigin = 'Anonymous'; // 重要：允许跨域
+                          
+                          img.onload = function() {
+                              const canvas = document.createElement('canvas');
+                              canvas.width = img.width;
+                              canvas.height = img.height;
+                              
+                              const ctx = canvas.getContext('2d');
+                              ctx.drawImage(img, 0, 0);
+                              
+                              canvas.toBlob((blob) => {
+                                  if (blob) {
+                                      resolve(blob);
+                                  } else {
+                                      reject(new Error('无法创建Blob'));
+                                  }
+                              }, 'image/png');
+                          };
+                          
+                          img.onerror = function(err) {
+                              reject(new Error('图片加载失败'));
+                          };
+                          
+                          // 设置超时
+                          setTimeout(() => {
+                              reject(new Error('图片加载超时'));
+                          }, 10000);
+                          
+                          img.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+                      });
+                  }
+                  
+                  // 监听复选框变化
+                  document.addEventListener('change', function(e) {
+                      if (e.target && e.target.classList.contains('checkbox')) {
+                          const songId = e.target.closest('.song-card')?.dataset.name;
+                          if (songId) {
+                              updateStatus(songId);
+                          }
+                      }
+                  });
+                  
+                  // 键盘快捷键
+                  document.addEventListener('keydown', function(e) {
+                      if (e.ctrlKey && e.key === 'f') {
+                          e.preventDefault();
+                          document.getElementById('search').focus();
+                      }
+                      
+                      if (e.key === 'Escape') {
+                          const searchInput = document.getElementById('search');
+                          if (document.activeElement === searchInput) {
+                              searchInput.value = '';
+                              searchInput.dispatchEvent(new Event('input'));
+                          }
+                      }
+                  });
+                  
+                  // 测试JSDelivr连接
+                  window.testConnection = async function() {
+                      console.log('测试JSDelivr连接...');
+                      const testUrl = 'https://cdn.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master/illustration/000AinSophAur.Yumeji.png';
+                      
+                      try {
+                          // 测试简单请求
+                          console.log('测试简单请求...');
+                          const response = await fetch(testUrl);
+                          console.log('简单请求结果:', response.status, response.ok ? '✓ 成功' : '✗ 失败');
+                          
+                          // 测试带时间戳的请求
+                          console.log('测试带缓存清除的请求...');
+                          const response2 = await fetch(testUrl + '?t=' + Date.now());
+                          console.log('缓存清除请求结果:', response2.status, response2.ok ? '✓ 成功' : '✗ 失败');
+                          
+                          return response.ok && response2.ok;
+                      } catch (error) {
+                          console.error('连接测试失败:', error);
+                          return false;
+                      }
+                  };
+                  
+                  // 页面加载后显示提示
+                  setTimeout(() => {
+                      console.log('如果下载失败，请尝试：');
+                      console.log('1. 刷新页面重试');
+                      console.log('2. 在控制台输入 testConnection() 测试连接');
+                      console.log('3. 直接访问 https://husbvt.github.io/phigros.github.io/');
+                  }, 1000);
               </script>
           </body>
           </html>
           EOF
 
-      - name: 3. 部署到 GitHub Pages
+          echo "HTML文件生成完成"
+
+      - name: 3. 部署到GitHub Pages
         env:
           AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
         run: |
+          echo "正在部署到GitHub Pages..."
+          
           git clone "https://${AUTH_TOKEN}@github.com/husbvt/phigros.github.io.git" pages_repo
           cp index.html pages_repo/
+          
           cd pages_repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html
-          if ! git diff --quiet HEAD; then
-            git commit -m "Auto Update: $(date '+%Y-%m-%d %H:%M:%S')"
-            git push origin master
+          
+          if ! git diff --quiet index.html; then
+              echo "检测到index.html有变化，正在提交..."
+              git add index.html
+              git commit -m "Zephyr: 简化请求避免CORS预检问题 $(date '+%Y-%m-%d %H:%M:%S')"
+              git push origin master
+              echo "部署成功！"
+              
+              echo "=== 部署完成 ==="
+              echo "GitHub Pages地址: https://husbvt.github.io/phigros.github.io/"
+              echo ""
+              echo "如果下载仍然失败："
+              echo "1. 在浏览器控制台输入 testConnection() 测试连接"
+              echo "2. 安装CORS浏览器插件"
+              echo "3. 直接使用GitHub Pages地址访问"
+          else
+              echo "没有检测到变化，跳过提交。"
           fi
+          
+          cd ..
+          rm -rf pages_repo build_repo
+          echo "部署流程完成。"
