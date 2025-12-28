@@ -1,4 +1,4 @@
-name: Update Phigros Categorized Pages
+name: Update Zephyr Phigros Pages
 
 on:
   workflow_run:
@@ -19,7 +19,7 @@ jobs:
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
 
-      - name: 2. 生成一键下载版网页
+      - name: 2. 生成 Zephyr 下载站 (极致加速版)
         run: |
           CDN_URL="https://cdn.jsdelivr.net/gh/husbvt/Phigros_Resource_Build@master"
           BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
@@ -30,72 +30,66 @@ jobs:
           <head>
               <meta charset="UTF-8">
               <meta name="viewport" content="width=device-width, initial-scale=1.0">
-              <title>Phigros 资源下载站</title>
+              <title>Zephyr的Phigros下载站</title>
               <style>
                   body { font-family: sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
                   .container { max-width: 1000px; margin: auto; }
-                  h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
-                  input#search { width: 100%; padding: 12px; margin: 20px 0; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 8px; box-sizing: border-box; border: 1px solid #30363d; }
+                  h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; font-size: 2em; }
+                  input#search { width: 100%; padding: 12px; margin: 20px 0; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 8px; box-sizing: border-box; }
                   .song-card { background: #161b22; border: 1px solid #30363d; margin-bottom: 25px; border-radius: 12px; overflow: hidden; display: flex; flex-direction: column; }
                   .song-header { background: #21262d; padding: 15px; font-weight: bold; border-bottom: 1px solid #30363d; color: #58a6ff; font-size: 1.2em; display: flex; justify-content: space-between; align-items: center; }
                   .song-content { display: flex; padding: 15px; gap: 20px; flex-wrap: wrap; }
-                  .preview-area { flex: 0 0 250px; min-width: 250px; }
-                  .preview-img { width: 100%; border-radius: 8px; border: 1px solid #30363d; cursor: pointer; }
+                  .preview-area { flex: 0 0 280px; min-width: 280px; min-height: 157px; background: #0d1117; border-radius: 8px; position: relative; overflow: hidden; }
+                  /* 图片预设状态：不占据带宽 */
+                  .preview-img { width: 100%; height: auto; border-radius: 8px; border: 1px solid #30363d; cursor: pointer; opacity: 0; transition: opacity 0.5s; }
+                  .preview-img.loaded { opacity: 1; }
                   .resource-list { flex: 1; display: flex; flex-direction: column; gap: 8px; min-width: 300px; }
-                  .file-item { display: flex; justify-content: space-between; align-items: center; background: #0d1117; padding: 8px 12px; border-radius: 6px; border: 1px solid #30363d; font-size: 0.9em; }
-                  .tag { font-size: 0.7em; padding: 2px 6px; border-radius: 4px; color: white; margin-right: 8px; font-weight: bold; }
-                  .tag-music { background: #1f6feb; }
-                  .tag-chart { background: #238636; }
-                  .btn-all { background: #238636; color: white; border: none; padding: 8px 15px; border-radius: 6px; cursor: pointer; font-weight: bold; }
-                  .btn-all:hover { background: #2ea043; }
+                  .file-item { display: flex; justify-content: space-between; align-items: center; background: #0d1117; padding: 10px 15px; border-radius: 6px; border: 1px solid #30363d; font-size: 0.9em; }
+                  .btn-all { background: #238636; color: white; border: none; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.9em; transition: 0.2s; }
+                  .btn-all:hover { background: #2ea043; transform: translateY(-1px); }
+                  .tag { font-size: 0.7em; padding: 2px 6px; border-radius: 4px; color: white; margin-right: 8px; font-weight: bold; background: #1f6feb; }
               </style>
           </head>
           <body>
               <div class="container">
-                  <h1>Phigros 资源库 (一键下载版)</h1>
-                  <input type="text" id="search" placeholder="搜索歌曲 ID..." onkeyup="filter()">
+                  <h1>Zephyr的Phigros下载站</h1>
+                  <input type="text" id="search" placeholder="输入歌名/ID快速筛选..." onkeyup="filter()">
                   <div id="list">
           EOF
 
           cd build_repo
-          # 汇总所有 ID
+          # 提取 ID 并生成内容
           ALL_IDS=$(ls music chart illustration 2>/dev/null | sed 's/\.[^.]*$//' | sort -u)
           
           for song_id in $ALL_IDS; do
               [ -z "$song_id" ] && continue
-
-              # 获取该歌曲所有关联文件
               MUSIC_FILES=$(find music -name "${song_id}*" -type f)
               CHART_FILES=$(find chart -name "${song_id}*" -type f)
               ILLUS_FILE=$(find illustration -name "${song_id}*" -type f | head -n 1)
 
-              # 构建一键下载的链接数组 (JS 格式)
+              # 构建下载数组
               DL_ARRAY=""
               for f in $MUSIC_FILES $CHART_FILES $ILLUS_FILE; do
                   DL_ARRAY+="'$BASE_URL/$f',"
               done
 
               echo "<div class='song-card' data-name='$song_id'>" >> ../index.html
-              echo "<div class='song-header'><span>$song_id</span><button class='btn-all' onclick=\"downloadAll([$DL_ARRAY])\">一键打包下载</button></div>" >> ../index.html
+              echo "<div class='song-header'><span>$song_id</span><button class='btn-all' onclick=\"downloadAll([$DL_ARRAY])\">一键下载全套</button></div>" >> ../index.html
               echo "<div class='song-content'>" >> ../index.html
               
-              # 曲绘预览
+              # 图片改为 data-src 模式，配合脚本实现滚动加载
               echo "<div class='preview-area'>" >> ../index.html
               if [ ! -z "$ILLUS_FILE" ]; then
-                  echo "<img class='preview-img' src='$CDN_URL/$ILLUS_FILE' loading='lazy' onclick='window.open(this.src)'>" >> ../index.html
+                  echo "<img class='preview-img lazy' data-src='$CDN_URL/$ILLUS_FILE' onclick='window.open(this.src)'>" >> ../index.html
               else
-                  echo "<div style='width:100%;height:140px;background:#30363d;border-radius:8px;'></div>" >> ../index.html
+                  echo "<div style='display:flex;align-items:center;justify-content:center;height:100%;color:#444;'>无封面</div>" >> ../index.html
               fi
               echo "</div>" >> ../index.html
               
-              # 列表
+              # 资源展示
               echo "<div class='resource-list'>" >> ../index.html
-              for f in $MUSIC_FILES; do
-                  echo "<div class='file-item'><span><span class='tag tag-music'>Music</span>$(basename "$f")</span></div>" >> ../../index.html
-              done
-              for f in $CHART_FILES; do
-                  echo "<div class='file-item'><span><span class='tag tag-chart'>Chart</span>$(basename "$f")</span></div>" >> ../../index.html
-              done
+              [ ! -z "$MUSIC_FILES" ] && echo "<div class='file-item'><span><span class='tag'>Audio</span>已就绪</span></div>" >> ../index.html
+              [ ! -z "$CHART_FILES" ] && echo "<div class='file-item'><span><span class='tag' style='background:#238636'>Charts</span>已关联 $(echo "$CHART_FILES" | wc -l) 个谱面</span></div>" >> ../index.html
               echo "</div></div></div>" >> ../index.html
           done
           cd ..
@@ -104,7 +98,23 @@ jobs:
                   </div>
               </div>
               <script>
+                  // 1. 核心加速：IntersectionObserver 懒加载
+                  const observer = new IntersectionObserver((entries) => {
+                      entries.forEach(entry => {
+                          if (entry.isIntersecting) {
+                              const img = entry.target;
+                              img.src = img.dataset.src;
+                              img.onload = () => img.classList.add('loaded');
+                              observer.unobserve(img);
+                          }
+                      });
+                  }, { rootMargin: '100px' }); // 提前100像素开始加载
+
+                  document.querySelectorAll('.lazy').forEach(img => observer.observe(img));
+
+                  // 2. 一键下载逻辑
                   async function downloadAll(urls) {
+                      if(!confirm('确定要同时开启多个下载吗？')) return;
                       for (const url of urls) {
                           const a = document.createElement('a');
                           a.href = url;
@@ -112,10 +122,11 @@ jobs:
                           document.body.appendChild(a);
                           a.click();
                           document.body.removeChild(a);
-                          // 稍微延迟，防止浏览器拦截多个下载
-                          await new Promise(r => setTimeout(r, 500));
+                          await new Promise(r => setTimeout(r, 600)); // 适当延时防止崩溃
                       }
                   }
+
+                  // 3. 搜索过滤
                   function filter() {
                       let q = document.getElementById('search').value.toLowerCase();
                       document.querySelectorAll('.song-card').forEach(c => {
@@ -137,5 +148,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html
-          git commit -m "feat: Add one-click download for all resources" || echo "No changes"
+          git commit -m "Update: Zephyr Download Station with optimized lazy loading" || echo "No changes"
           git push origin master --force
