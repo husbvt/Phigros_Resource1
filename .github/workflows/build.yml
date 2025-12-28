@@ -1,4 +1,4 @@
-name: Phigros Resources To Dedicated Page
+name: Phigros Full Resources Final with Pages
 
 on:
   workflow_dispatch:
@@ -39,87 +39,106 @@ jobs:
           sudo apt-get install -y libogg-dev libvorbis-dev
           pip install UnityPy==1.10.18 fsb5
 
-      - name: 5. 检出目标仓库 (资源库与网页库)
-        run: |
-          # 检出资源库（存放 2GB 文件的库）
-          git clone https://x-access-token:${{ secrets.BUILD_PAT }}@github.com/husbvt/Phigros_Resource_Build.git build_repo
-          # 检出网页库（phigros.github.io）
-          git clone https://x-access-token:${{ secrets.BUILD_PAT }}@github.com/husbvt/phigros.github.io.git pages_repo
+      - name: 5. 检出目标仓库 (husbvt)
+        uses: actions/checkout@v4
+        with:
+          repository: husbvt/Phigros_Resource_Build
+          token: ${{ secrets.BUILD_PAT }}
+          path: build_repo
 
-      - name: 6. 自动化分阶段提取 (仅 谱面/音乐/曲绘)
+      - name: 6. 自动化分阶段提取
         working-directory: ./resource
         run: |
-          # 优化：直接生成对应的 config.ini 节，解决 KeyError: 'TYPES'
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
 
-          extract_task() {
-            local task=$1
-            echo "🚀 Processing: $task"
-            cat > config.ini <<EOF
-          [TYPES]
-          avatar = False
-          Chart = $([[ "$task" == "chart" ]] && echo "True" || echo "False")
-          music = $([[ "$task" == "music" ]] && echo "True" || echo "False")
-          illustration = $([[ "$task" == "illustration" ]] && echo "True" || echo "False")
-          illustrationBlur = False
-          illustrationLowRes = False
-          EOF
-            python resource.py Phigros.apk || echo "Skip $task"
-            if [ -d "$task" ]; then
-              rsync -av "$task/" "../build_repo/$task/"
-              rm -rf "$task"/*
+          # --- 1. 提取头像 (Avatar) ---
+          echo "🚀 Processing: avatar"
+          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          sed -i -E "s/^avatar[[:space:]]*=.*/avatar = True/I" config.ini
+          python resource.py Phigros.apk || echo "Skip"
+          for d in avatar Avatar; do
+            if [ -d "$d" ] && [ "$(ls -A "$d" 2>/dev/null)" ]; then
+              rsync -av "$d/" "../build_repo/avatar/"
+              rm -rf "$d"/*
             fi
-          }
+          done
 
-          extract_task "chart"
-          extract_task "music"
-          extract_task "illustration"
+          # --- 2. 提取谱面 (Chart) ---
+          echo "🚀 Processing: Chart"
+          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          sed -i -E "s/^Chart[[:space:]]*=.*/Chart = True/I" config.ini
+          python resource.py Phigros.apk || echo "Skip"
+          if [ -d "chart" ]; then rsync -av "chart/" "../build_repo/chart/"; rm -rf "chart"/*; fi
 
-      - name: 7. 生成跨仓库下载站网页
+          # --- 3. 提取音乐 (music) ---
+          echo "🚀 Processing: music"
+          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          sed -i -E "s/^music[[:space:]]*=.*/music = True/I" config.ini
+          python resource.py Phigros.apk || echo "Skip"
+          if [ -d "music" ]; then rsync -av "music/" "../build_repo/music/"; rm -rf "music"/*; fi
+
+          # --- 4. 提取曲绘 (illustration) ---
+          echo "🚀 Processing: illustration"
+          sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
+          sed -i -E "s/^illustration[[:space:]]*=.*/illustration = True/I" config.ini
+          python resource.py Phigros.apk || echo "Skip"
+          if [ -d "illustration" ]; then rsync -av "illustration/" "../build_repo/illustration/"; rm -rf "illustration"/*; fi
+
+      - name: 7. 推送资源至 husbvt 仓库
         working-directory: ./build_repo
+        env:
+          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
         run: |
-          # 资源重定向地址：指向 Phigros_Resource_Build 开启 Pages 后的地址
-          BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
+            git push "https://${AUTH_TOKEN}@github.com/husbvt/Phigros_Resource_Build.git" HEAD:master --force
+          else
+            echo "✅ No changes to push."
+          fi
+
+      - name: 8. 生成下载页并推送至 phigros.github.io
+        env:
+          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
+        run: |
+          # 1. 克隆网页仓库
+          git clone "https://${AUTH_TOKEN}@github.com/husbvt/phigros.github.io.git" pages_repo
           
-          cat > index.html <<EOF
+          # 2. 在 pages_repo 中生成 index.html
+          BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
+          cat > pages_repo/index.html <<EOF
           <!DOCTYPE html>
-          <html lang="zh-CN">
+          <html>
           <head>
               <meta charset="UTF-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1.0">
               <title>Phigros 资源下载站</title>
               <style>
-                  body { font-family: sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
-                  .container { max-width: 900px; margin: auto; }
-                  h1 { color: #58a6ff; text-align: center; border-bottom: 1px solid #30363d; padding-bottom: 15px; }
-                  input#search { width: 100%; padding: 12px; background: #161b22; border: 1px solid #30363d; color: #fff; border-radius: 8px; margin: 20px 0; box-sizing: border-box; }
-                  .item { background: #161b22; border: 1px solid #30363d; padding: 12px; margin-bottom: 8px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; }
-                  .tag { font-size: 10px; padding: 3px 8px; border-radius: 4px; background: #238636; color: white; margin-right: 12px; }
-                  .btn { color: #58a6ff; text-decoration: none; font-weight: bold; border: 1px solid #30363d; padding: 6px 12px; border-radius: 6px; }
-                  .btn:hover { background: #30363d; }
-                  .footer { text-align: center; color: #8b949e; margin-top: 30px; font-size: 0.8em; }
+                  body { font-family: sans-serif; background: #121212; color: #fff; padding: 20px; }
+                  .item { background: #1e1e1e; padding: 10px; margin: 5px; border-radius: 5px; display: flex; justify-content: space-between; }
+                  input { width: 100%; padding: 10px; margin-bottom: 20px; background: #333; color: #fff; border: none; }
+                  a { color: #4db8ff; text-decoration: none; border: 1px solid #4db8ff; padding: 2px 8px; border-radius: 4px; }
               </style>
           </head>
           <body>
-              <div class="container">
-                  <h1>Phigros 资源库 (专用下载站)</h1>
-                  <input type="text" id="search" placeholder="输入关键字搜索歌曲、谱面..." onkeyup="doSearch()">
-                  <div id="list">
+              <h1>Phigros 资源库</h1>
+              <input type="text" id="s" placeholder="搜索..." onkeyup="search()">
+              <div id="l">
           EOF
 
-          # 自动扫描三个主文件夹并生成列表
-          find chart music illustration -type f | sort | while read -r f; do
-             T=$(echo "$f" | cut -d'/' -f1 | tr 'a-z' 'A-Z')
-             echo "<div class='item'><div><span class='tag'>$T</span>$(basename "$f")</div><a class='btn' href='$BASE_URL/$f' target='_blank'>下载</a></div>" >> index.html
+          # 扫描 build_repo 里的文件生成列表
+          cd build_repo
+          find music chart illustration avatar -type f | sort | while read -r f; do
+            echo "<div class='item'><span>$f</span><a href='$BASE_URL/$f' target='_blank'>下载</a></div>" >> ../pages_repo/index.html
           done
+          cd ..
 
-          cat >> index.html <<EOF
-                  </div>
-                  <div class="footer">最后更新: $(date +'%Y-%m-%d %H:%M')</div>
+          cat >> pages_repo/index.html <<EOF
               </div>
               <script>
-                  function doSearch() {
-                      let q = document.getElementById('search').value.toLowerCase();
+                  function search() {
+                      let q = document.getElementById('s').value.toLowerCase();
                       document.querySelectorAll('.item').forEach(i => {
                           i.style.display = i.innerText.toLowerCase().includes(q) ? "" : "none";
                       });
@@ -129,25 +148,10 @@ jobs:
           </html>
           EOF
 
-      - name: 8. 同步资源到 Phigros_Resource_Build
-        working-directory: ./build_repo
-        run: |
-          git config --global user.name "github-actions[bot]"
-          git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add chart/ music/ illustration/
-          if ! git diff --cached --quiet; then
-            git commit -m "Auto Update Assets"
-            git push origin master --force
-          fi
-
-      - name: 9. 部署网页到 phigros.github.io
-        run: |
-          cp build_repo/index.html pages_repo/
+          # 3. 推送网页
           cd pages_repo
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add index.html
-          if ! git diff --cached --quiet; then
-            git commit -m "Update Index UI"
-            git push origin master --force
-          fi
+          git commit -m "Update Navigation Page" || echo "No changes"
+          git push
