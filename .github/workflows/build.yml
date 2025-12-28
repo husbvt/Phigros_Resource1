@@ -1,4 +1,4 @@
-name: Phigros Full Resources Final with Pages
+name: Phigros Full Resources Final
 
 on:
   workflow_dispatch:
@@ -49,13 +49,16 @@ jobs:
       - name: 6. 自动化分阶段提取
         working-directory: ./resource
         run: |
+          # 强制并发为 1
           sed -i 's/ThreadPoolExecutor(6)/ThreadPoolExecutor(1)/g' resource.py
 
           # --- 1. 提取头像 (Avatar) ---
+          # 修复点：同时尝试大写开头的开关
           echo "🚀 Processing: avatar"
           sed -i -E "s/^(avatar|Chart|illustration|illustrationBlur|illustrationLowRes|music)[[:space:]]*=.*/\1 = False/I" config.ini
           sed -i -E "s/^avatar[[:space:]]*=.*/avatar = True/I" config.ini
           python resource.py Phigros.apk || echo "Skip"
+          # 检查多个可能的输出目录名 (avatar 或 Avatar)
           for d in avatar Avatar; do
             if [ -d "$d" ] && [ "$(ls -A "$d" 2>/dev/null)" ]; then
               rsync -av "$d/" "../build_repo/avatar/"
@@ -84,74 +87,23 @@ jobs:
           python resource.py Phigros.apk || echo "Skip"
           if [ -d "illustration" ]; then rsync -av "illustration/" "../build_repo/illustration/"; rm -rf "illustration"/*; fi
 
-      - name: 7. 推送资源至 husbvt 仓库
+      - name: 7. 最终推送至 husbvt 仓库 master 分支
         working-directory: ./build_repo
         env:
           AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git config --global core.quotepath false
+
+          echo "📊 Final Size Check:"
+          du -sh ./*
+
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "Auto Update Resources: $(date +'%Y-%m-%d %H:%M')"
+            # 明确推送到 master 分支
             git push "https://${AUTH_TOKEN}@github.com/husbvt/Phigros_Resource_Build.git" HEAD:master --force
           else
             echo "✅ No changes to push."
           fi
-
-      - name: 8. 生成下载页并推送至 phigros.github.io
-        env:
-          AUTH_TOKEN: ${{ secrets.BUILD_PAT }}
-        run: |
-          # 1. 克隆网页仓库
-          git clone "https://${AUTH_TOKEN}@github.com/husbvt/phigros.github.io.git" pages_repo
-          
-          # 2. 在 pages_repo 中生成 index.html
-          BASE_URL="https://husbvt.github.io/Phigros_Resource_Build"
-          cat > pages_repo/index.html <<EOF
-          <!DOCTYPE html>
-          <html>
-          <head>
-              <meta charset="UTF-8">
-              <title>Phigros 资源下载站</title>
-              <style>
-                  body { font-family: sans-serif; background: #121212; color: #fff; padding: 20px; }
-                  .item { background: #1e1e1e; padding: 10px; margin: 5px; border-radius: 5px; display: flex; justify-content: space-between; }
-                  input { width: 100%; padding: 10px; margin-bottom: 20px; background: #333; color: #fff; border: none; }
-                  a { color: #4db8ff; text-decoration: none; border: 1px solid #4db8ff; padding: 2px 8px; border-radius: 4px; }
-              </style>
-          </head>
-          <body>
-              <h1>Phigros 资源库</h1>
-              <input type="text" id="s" placeholder="搜索..." onkeyup="search()">
-              <div id="l">
-          EOF
-
-          # 扫描 build_repo 里的文件生成列表
-          cd build_repo
-          find music chart illustration avatar -type f | sort | while read -r f; do
-            echo "<div class='item'><span>$f</span><a href='$BASE_URL/$f' target='_blank'>下载</a></div>" >> ../pages_repo/index.html
-          done
-          cd ..
-
-          cat >> pages_repo/index.html <<EOF
-              </div>
-              <script>
-                  function search() {
-                      let q = document.getElementById('s').value.toLowerCase();
-                      document.querySelectorAll('.item').forEach(i => {
-                          i.style.display = i.innerText.toLowerCase().includes(q) ? "" : "none";
-                      });
-                  }
-              </script>
-          </body>
-          </html>
-          EOF
-
-          # 3. 推送网页
-          cd pages_repo
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add index.html
-          git commit -m "Update Navigation Page" || echo "No changes"
-          git push
