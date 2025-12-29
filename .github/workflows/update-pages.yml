@@ -467,7 +467,7 @@ jobs:
                           const listContainer = document.getElementById('list');
                           if (listContainer) {
                               listContainer.innerHTML = \`
-EOF2
+          EOF2
                   
                   # 插入歌曲卡片内容
                   cat "$SONG_CARDS_FILE" >> ../home.html
