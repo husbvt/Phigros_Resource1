@@ -11,12 +11,17 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: 1. 检出资源库
+      # --- 修改部分开始 ---
+      - name: 0. 检出当前仓库 (获取 scripts 文件夹)
+        uses: actions/checkout@v4
+
+      - name: 1. 检出资源库 (到子目录)
         uses: actions/checkout@v4
         with:
           repository: husbvt/Phigros_Resource_Build
           token: ${{ secrets.BUILD_PAT }}
           path: build_repo
+      # --- 修改部分结束 ---
 
       - name: 2. 生成下载站HTML
         run: |
