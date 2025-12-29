@@ -1,5 +1,5 @@
 #!/bin/bash
-# scripts/generate_zephyr_site.sh
+# scripts/generate_zephyr_site.sh - 修复版
 set -e
 
 # 使用JSDelivr CDN
@@ -9,7 +9,7 @@ OUTPUT_FILE="$2"
 
 echo "开始生成Zephyr下载站..."
 
-# 创建基础HTML
+# 创建基础HTML - 修复验证和下载站冲突问题
 cat > "$OUTPUT_FILE" << 'HTML_HEAD'
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -19,15 +19,18 @@ cat > "$OUTPUT_FILE" << 'HTML_HEAD'
     <title>Zephyr的下载站</title>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     
-    <!-- 强化的访问控制验证脚本 -->
+    <!-- 强化的访问控制验证脚本 - 修复版 -->
     <script>
         // ===== 强化的访问控制验证 =====
         (function() {
             console.log('🔐 Zephyr下载站 - 访问控制启动');
             
-            // 第一步：立即显示验证界面，阻止直接访问
-            document.body.innerHTML = \`
-                <div style="
+            // 保存原始body内容
+            const originalBody = document.body.innerHTML;
+            
+            // 显示验证界面
+            document.body.innerHTML = `
+                <div id="verify-overlay" style="
                     position: fixed;
                     top: 0;
                     left: 0;
@@ -74,7 +77,7 @@ cat > "$OUTPUT_FILE" << 'HTML_HEAD'
                         </button>
                     </div>
                 </div>
-            \`;
+            `;
             
             // 进度条动画
             let progress = 0;
@@ -86,7 +89,7 @@ cat > "$OUTPUT_FILE" << 'HTML_HEAD'
                 if (progress >= 100) clearInterval(progressInterval);
             }, 100);
             
-            // 核心验证函数
+            // 核心验证函数 - 修复版
             function verifyAccess() {
                 console.log('🔍 开始核心验证...');
                 
@@ -97,7 +100,6 @@ cat > "$OUTPUT_FILE" << 'HTML_HEAD'
                 if (urlToken) {
                     console.log('✅ 检测到URL验证令牌');
                     try {
-                        // 验证URL令牌
                         const decoded = atob(urlToken);
                         const [timestampStr, randomStr, cfToken] = decoded.split('_');
                         const timestamp = parseInt(timestampStr);
@@ -153,23 +155,6 @@ cat > "$OUTPUT_FILE" << 'HTML_HEAD'
                     }
                 }
                 
-                // 3. 检查referrer（是否从验证页跳转）
-                const referrer = document.referrer;
-                if (referrer && referrer.includes('index.html')) {
-                    console.log('🔍 检测到来自验证页的跳转');
-                    console.warn('⚠️ 有referrer但无令牌，需要重新验证');
-                }
-                
-                // 4. 检查localStorage的最近验证记录
-                const lastVerified = localStorage.getItem('last_verified');
-                if (lastVerified) {
-                    const lastTime = parseInt(lastVerified);
-                    const now = Date.now();
-                    if (now - lastTime < 5 * 60 * 1000) {
-                        console.log('⏱️ 最近验证过，但需要完整验证');
-                    }
-                }
-                
                 // 所有验证都失败
                 console.log('❌ 访问验证失败，重定向到验证页');
                 return false;
@@ -187,9 +172,10 @@ cat > "$OUTPUT_FILE" << 'HTML_HEAD'
                     clearInterval(progressInterval);
                     
                     setTimeout(() => {
-                        document.body.innerHTML = originalBodyContent;
-                        if (typeof initDownloadStation === 'function') {
-                            initDownloadStation();
+                        // 关键修复：恢复原始内容，而不是用新的HTML
+                        document.body.innerHTML = originalBody;
+                        if (typeof window.initDownloadStation === 'function') {
+                            window.initDownloadStation();
                         }
                     }, 500);
                 } else {
@@ -199,27 +185,15 @@ cat > "$OUTPUT_FILE" << 'HTML_HEAD'
                     
                     setTimeout(() => {
                         window.location.href = 'index.html?from=' + encodeURIComponent(window.location.href);
-                    }, 3000);
+                    }, 1500);
                 }
             }, 1000);
-            
-            // 保存原始页面内容
-            const originalBodyContent = \`
-                <div class="container">
-                    <h1>🎵 Zephyr的Phigros资源下载站</h1>
-                    <div style="text-align: center; margin-bottom: 20px; color: #8b949e; font-size: 0.9em;">
-                        使用JSDelivr CDN，支持跨域下载
-                    </div>
-                    <input type="text" id="search" class="search-box" placeholder="搜索歌曲ID (例如: 青芽) 或直接输入ID...">
-                    <div id="list">
-                <!-- 内容将由脚本动态生成 -->
-            \`;
-            
         })();
         // ===== 强化的访问控制结束 =====
     </script>
     
     <style>
+        /* 下载站样式 */
         :root { --blue: #58a6ff; --bg: #0d1117; --card: #161b22; }
         body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: var(--bg); color: #c9d1d9; margin: 0; padding: 15px; }
         .container { max-width: 900px; margin: auto; }
@@ -269,9 +243,15 @@ cat > "$OUTPUT_FILE" << 'HTML_HEAD'
     </style>
 </head>
 <body>
-    <!-- 内容将由脚本动态生成 -->
-</body>
-</html>
+    <!-- 下载站主体内容 -->
+    <div class="container">
+        <h1>🎵 Zephyr的Phigros资源下载站</h1>
+        <div style="text-align: center; margin-bottom: 20px; color: #8b949e; font-size: 0.9em;">
+            使用JSDelivr CDN，支持跨域下载
+        </div>
+        <input type="text" id="search" class="search-box" placeholder="搜索歌曲ID (例如: 青芽) 或直接输入ID...">
+        <div id="list">
+            <!-- 歌曲卡片将由脚本动态生成 -->
 HTML_HEAD
 
 echo "基础HTML生成完成，开始生成歌曲卡片..."
@@ -329,13 +309,13 @@ else
         SONG_COUNT=$((SONG_COUNT + 1))
         ILL_PREVIEW=$(echo "$ILL_FILES" | head -n1)
         
-        # 开始生成歌曲卡片
+        # 开始生成歌曲卡片 - 修复标签问题
         CARD_HTML="<div class='song-card' data-name='$id_clean'>"
         CARD_HTML+="<div class='song-header'>"
         CARD_HTML+="<span>$id_clean</span>"
         CARD_HTML+="<div style='display: flex; align-items: center;'>"
         CARD_HTML+="<span id='st-$id_clean' class='status'>$TOTAL_FILES个文件</span>"
-        CARD_HTML+="<button class='btn-zip' onclick='pack(\"$id_clean\", this)' title='下载选中的文件'>📦 打包下载</button>"
+        CARD_HTML+="<button class='btn-zip' onclick='window.pack(\"$id_clean\", this)' title='下载选中的文件'>📦 打包下载</button>"
         CARD_HTML+="</div></div>"
         CARD_HTML+="<div class='song-content'>"
         
@@ -352,10 +332,10 @@ else
         
         # 资源列表
         CARD_HTML+="<div class='resource-list'>"
-        CARD_HTML+="<div class='select-all' onclick='toggleAll(\"$id_clean\")'>📋 全选/取消全选</div>"
+        CARD_HTML+="<div class='select-all' onclick='window.toggleAll(\"$id_clean\")'>📋 全选/取消全选</div>"
         CARD_HTML+="<div id='files-$id_clean'>"
         
-        # 曲绘文件
+        # 曲绘文件 - 修复：使用正确的标签
         if [ $ILL_FILES_COUNT -gt 0 ]; then
             echo "$ILL_FILES" | while read -r f; do
                 [ -z "$f" ] && continue
@@ -368,7 +348,7 @@ else
             done
         fi
         
-        # 音频文件
+        # 音频文件 - 修复：使用正确的标签
         if [ $AUDIO_FILES_COUNT -gt 0 ]; then
             echo "$AUDIO_FILES" | while read -r f; do
                 [ -z "$f" ] && continue
@@ -381,7 +361,7 @@ else
             done
         fi
         
-        # 谱面文件
+        # 谱面文件 - 修复：使用正确的标签
         if [ $CHART_FILES_COUNT -gt 0 ]; then
             echo "$CHART_FILES" | while read -r f; do
                 [ -z "$f" ] && continue
@@ -433,30 +413,19 @@ fi
 # 回到原始目录
 cd -
 
-# 现在将歌曲卡片和JavaScript添加到HTML文件中
-echo "添加歌曲卡片和JavaScript到HTML..."
-
-# 创建一个临时文件来存储完整的HTML
-TEMP_HTML=$(mktemp)
-
-# 复制原始HTML头部
-head -n -5 "$OUTPUT_FILE" > "$TEMP_HTML"
-
-# 添加歌曲卡片容器
-echo "<div id=\"list\">" >> "$TEMP_HTML"
-
-# 添加歌曲卡片
+# 添加歌曲卡片到HTML
 if [ $SONG_COUNT -eq 0 ]; then
-    echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> "$TEMP_HTML"
+    echo "<div class='no-files'>仓库中没有找到任何资源文件</div>" >> "$OUTPUT_FILE"
 else
-    echo -e "$SONG_CARDS" >> "$TEMP_HTML"
+    echo -e "$SONG_CARDS" >> "$OUTPUT_FILE"
 fi
 
-echo "</div>" >> "$TEMP_HTML"
+echo "</div>" >> "$OUTPUT_FILE"
 
-# 添加JavaScript
-cat >> "$TEMP_HTML" << 'JS_CONTENT'
+# 添加JavaScript功能
+cat >> "$OUTPUT_FILE" << 'JS_CONTENT'
 </div>
+
 <script>
     // 页面初始化函数
     window.initDownloadStation = function() {
@@ -738,6 +707,11 @@ cat >> "$TEMP_HTML" << 'JS_CONTENT'
         }
     };
     
+    // 初始化页面
+    document.addEventListener('DOMContentLoaded', function() {
+        window.initDownloadStation();
+    });
+    
     document.addEventListener('change', function(e) {
         if (e.target && e.target.classList.contains('checkbox')) {
             const songId = e.target.closest('.song-card')?.dataset.name;
@@ -759,6 +733,7 @@ cat >> "$TEMP_HTML" << 'JS_CONTENT'
 </html>
 JS_CONTENT
 
-# 替换原始文件
-mv "$TEMP_HTML" "$OUTPUT_FILE"
 echo "✅ HTML文件生成完成: $OUTPUT_FILE"
+echo "🎵 生成 $SONG_COUNT 个歌曲卡片"
+echo "🔒 验证系统: 已启用（10分钟有效期）"
+echo "📦 打包功能: 已启用（支持ZIP下载）"
