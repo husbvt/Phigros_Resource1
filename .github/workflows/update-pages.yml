@@ -21,7 +21,7 @@ jobs:
       - name: 2. 生成下载站HTML
         run: |
           # 给脚本执行权限
-          chmod +x ./scripts/generate_zephyr_site.sh
+          chmod +x scripts/generate_zephyr_site.sh
           
           # 运行生成脚本
           ./scripts/generate_zephyr_site.sh build_repo home.html
