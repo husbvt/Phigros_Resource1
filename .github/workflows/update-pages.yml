@@ -457,7 +457,7 @@ jobs:
                   SONG_CARDS_CONTENT=$(cat "$SONG_CARDS_FILE")
                   
                   # 在home.html中插入歌曲卡片和JavaScript
-                  cat >> ../home.html <<EOF
+                  cat >> ../home.html <<'EOF2'
                   <script>
                       // 页面初始化函数
                       window.initDownloadStation = function() {
@@ -467,7 +467,13 @@ jobs:
                           const listContainer = document.getElementById('list');
                           if (listContainer) {
                               listContainer.innerHTML = \`
-              ${SONG_CARDS_CONTENT}
+EOF2
+                  
+                  # 插入歌曲卡片内容
+                  cat "$SONG_CARDS_FILE" >> ../home.html
+                  
+                  # 继续JavaScript部分
+                  cat >> ../home.html <<'EOF2'
                               \`;
                               
                               // 初始化功能
@@ -476,7 +482,7 @@ jobs:
                               initCheckboxes();
                               initStatus();
                               
-                              console.log('✅ 下载站初始化完成，共加载 \${document.querySelectorAll('.song-card').length} 个歌曲');
+                              console.log('✅ 下载站初始化完成，共加载 ' + document.querySelectorAll('.song-card').length + ' 个歌曲');
                           }
                           
                           // 原有功能函数保持不变
@@ -576,7 +582,7 @@ jobs:
                               
                               const statusElem = document.getElementById('st-' + songId);
                               if (statusElem) {
-                                  statusElem.textContent = \`\${checkedCount}/\${totalCount}个选中\`;
+                                  statusElem.textContent = checkedCount + '/' + totalCount + '个选中';
                               }
                           };
                           
@@ -634,7 +640,7 @@ jobs:
                                       progressFill.style.width = progress + '%';
                                       
                                       if (statusElem) {
-                                          statusElem.textContent = \`下载中 (\${progress}%): \${fileInfo.name}\`;
+                                          statusElem.textContent = '下载中 (' + progress + '%): ' + fileInfo.name;
                                       }
                                       
                                       try {
@@ -642,7 +648,7 @@ jobs:
                                           const response = await fetch(cacheBustUrl);
                                           
                                           if (!response.ok) {
-                                              failedFiles.push({name: fileInfo.name, error: \`HTTP \${response.status}\`});
+                                              failedFiles.push({name: fileInfo.name, error: 'HTTP ' + response.status});
                                               continue;
                                           }
                                           
@@ -681,7 +687,7 @@ jobs:
                                   const downloadUrl = URL.createObjectURL(zipBlob);
                                   const link = document.createElement('a');
                                   link.href = downloadUrl;
-                                  link.download = \`\${songId}_resources_\${Date.now()}.zip\`;
+                                  link.download = songId + '_resources_' + Date.now() + '.zip';
                                   link.style.display = 'none';
                                   
                                   link.onclick = () => {
@@ -698,7 +704,7 @@ jobs:
                                   if (statusElem) {
                                       let statusText = '下载完成！';
                                       if (failedFiles.length > 0) {
-                                          statusText += \` (\${failedFiles.length}个文件失败)\`;
+                                          statusText += ' (' + failedFiles.length + '个文件失败)';
                                       }
                                       statusElem.textContent = statusText;
                                   }
@@ -706,8 +712,8 @@ jobs:
                                   
                                   if (failedFiles.length > 0) {
                                       setTimeout(() => {
-                                          const failedList = failedFiles.map(f => \`\${f.name}: \${f.error}\`).join('\\n');
-                                          alert(\`下载完成，但以下文件下载失败:\\n\\n\${failedList}\\n\\n成功下载: \${successCount}个文件\\n失败: \${failedFiles.length}个文件\`);
+                                          const failedList = failedFiles.map(f => f.name + ': ' + f.error).join('\n');
+                                          alert('下载完成，但以下文件下载失败:\n\n' + failedList + '\n\n成功下载: ' + successCount + '个文件\n失败: ' + failedFiles.length + '个文件');
                                       }, 1000);
                                   }
                                   
@@ -732,10 +738,10 @@ jobs:
                                   
                                   let errorMsg = '打包下载失败';
                                   if (error.message.includes('Failed to fetch') || error.message.includes('CORS')) {
-                                      errorMsg += '：跨域请求被阻止。\\n\\n解决方案：\\n1. 安装CORS浏览器插件\\n2. 或直接访问 https://husbvt.github.io/phigros.github.io/\\n3. 或在GitHub Pages域名下使用';
+                                      errorMsg += '：跨域请求被阻止。\n\n解决方案：\n1. 安装CORS浏览器插件\n2. 或直接访问 https://husbvt.github.io/phigros.github.io/\n3. 或在GitHub Pages域名下使用';
                                   }
                                   
-                                  alert(errorMsg + '\\n\\n错误详情: ' + error.message);
+                                  alert(errorMsg + '\n\n错误详情: ' + error.message);
                                   
                                   setTimeout(() => {
                                       button.disabled = false;
@@ -768,7 +774,8 @@ jobs:
                           });
                       };
                   </script>
-EOF
+EOF2
+                  
                   # 清理临时文件
                   rm -f "$SONG_CARDS_FILE"
               fi
