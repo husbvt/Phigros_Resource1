@@ -117,7 +117,7 @@ jobs:
         with:
           repository: "SteveZMTstudios/Phigros-history"
           latest: true
-          fileName: "*.7z.*"
+          fileName: "*.7z*"
           out-file-path: "./downloads"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
