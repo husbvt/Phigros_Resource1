@@ -127,11 +127,19 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y p7zip-full rsync
           mkdir -p ./extracted
-          7z x "downloads/*.7z.001" -o./extracted -y || echo "7z Skip"
-          FOUND_APK=$(find . -name "*.apk" -type f | head -n 1)
+          
+          # 核心修改：优先尝试解压分卷，如果失败则尝试解压普通 7z
+          if [ -f downloads/*.7z.001 ]; then
+            7z x "downloads/*.7z.001" -o./extracted -y
+          else
+            7z x "downloads/*.7z" -o./extracted -y
+          fi
+          
+          FOUND_APK=$(find ./extracted -name "*.apk" -type f | head -n 1)
           if [ -z "$FOUND_APK" ]; then echo "❌ APK NOT FOUND"; exit 1; fi
           mkdir -p ./resource
           cp "$FOUND_APK" ./resource/Phigros.apk
+
 
       - name: 6. 环境与依赖（条件性）
         if: steps.should-update.outputs.should_build == 'true'
